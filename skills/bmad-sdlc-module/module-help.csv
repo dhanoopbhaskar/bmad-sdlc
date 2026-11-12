@@ -1,0 +1,2 @@
+module,skill,display-name,menu-code,description,action,args,phase,preceded-by,followed-by,required,output-location,outputs
+BMAD SDLC Conductor,bmad-sdlc,SDLC Conductor,SDLC,"Conduct the whole BMAD SDLC through one front door: detect the model, keep a durable plan, present a phase/action menu, hand off to the right skill, gate every phase.",,,anytime,,,false,{output_folder}/sdlc,plan.yaml + .memlog.md

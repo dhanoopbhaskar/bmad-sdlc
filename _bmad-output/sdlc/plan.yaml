@@ -1,0 +1,156 @@
+# bmad-sdlc runtime ledger
+# Owner: the bmad-sdlc skill. BMAD artifacts remain the source of truth for
+# ticket/story status; this file stores only the SDLC overlay (position, gates,
+# decisions, pointers). Committed to git. The append-only audit trail lives in
+# .memlog.md beside this file.
+schema: bmad-sdlc/1
+project: bmad-sdlc
+created: '2026-11-12T16:11:53+05:30'
+updated: '2026-11-12T19:36:03+05:30'
+
+bmad:
+  model: v6
+  hub: bmad-help
+  output_folder: _bmad-output
+  planning_artifacts: _bmad-output/planning-artifacts
+  implementation_artifacts: _bmad-output/implementation-artifacts
+  test_artifacts: _bmad-output/test-artifacts
+active_workstream: ws-001
+
+# Workstreams are keyed by id, e.g. ws-001. See references/ledger-schema.md.
+workstreams:
+  ws-001:
+    name: bmad-sdlc
+    track: feature
+    size: epic
+    status: active
+    started: '2026-11-12T16:11:53+05:30'
+    updated: '2026-11-12T16:11:53+05:30'
+    current_phase: plan
+    artifacts:
+      spec:
+      prd:
+      ux:
+      architecture:
+      stories:
+      tickets:
+      sprint_plan:
+      test_design:
+      test_framework:
+      ci:
+      trace:
+    phases:
+      plan:
+        status: active
+        gate: required
+        evidence:
+          - docs/bmad-sdlc.md
+        note: ''
+      solution:
+        status: pending
+        gate: conditional
+        evidence: []
+        note: ''
+      build:
+        status: pending
+        gate: required
+        evidence: []
+        note: ''
+      verify:
+        status: pending
+        gate: required
+        evidence: []
+        note: ''
+      close:
+        status: pending
+        gate: optional
+        evidence: []
+        note: ''
+    gates:
+      plan:
+        requirements:
+          status: open
+          decided_at:
+          override_reason:
+          level: required
+        stories:
+          status: open
+          decided_at:
+          override_reason:
+          level: required
+        sprint:
+          status: open
+          decided_at:
+          override_reason:
+          level: required
+        ux:
+          status: open
+          decided_at:
+          override_reason:
+          level: conditional
+        architecture:
+          status: open
+          decided_at:
+          override_reason:
+          level: conditional
+      solution:
+        test_design:
+          status: open
+          decided_at:
+          override_reason:
+          level: conditional
+        framework:
+          status: open
+          decided_at:
+          override_reason:
+          level: conditional
+        ci:
+          status: open
+          decided_at:
+          override_reason:
+          level: conditional
+      build: {}
+      verify:
+        trace:
+          status: open
+          decided_at:
+          override_reason:
+          level: required
+        nfr:
+          status: open
+          decided_at:
+          override_reason:
+          level: conditional
+        test_review:
+          status: open
+          decided_at:
+          override_reason:
+          level: conditional
+      close:
+        retro:
+          status: open
+          decided_at:
+          override_reason:
+          level: optional
+        walkthrough:
+          status: open
+          decided_at:
+          override_reason:
+          level: optional
+    decisions:
+      - at: '2026-11-12T16:20:00+05:30'
+        decision: Bootstrapped bmad-sdlc outside the conductor; docs/bmad-sdlc.md and its build checklist are the plan of record.
+        reason: The conductor did not exist yet when the skill was designed and built.
+      - at: 2026-11-12T18:11:42+0530
+        decision: Second review pass fixed the conductor state machine and aligned the references.
+        reason: Audit routing, phase completion, blocked gates, override/order enforcement, multi-workstream init, and the eval harness limitations were blocking reliable delivery.
+      - decision: 'Third review pass: gate state is authoritative, levels are derived, write safety and detection fixed, docs/evals aligned.'
+        reason: Independent review found legal commands could close a workstream with required gates undecided.
+        at: '2026-11-12T19:36:03+05:30'
+    next:
+      phase: plan
+      gate: plan.requirements
+      action: frame.spec
+      skill: bmad-spec
+      reason: plan.requirements is a required open gate.
+    tickets: {}

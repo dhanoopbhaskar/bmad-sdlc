@@ -1,0 +1,27 @@
+# bmad-sdlc runtime ledger
+# Owner: the bmad-sdlc skill. BMAD artifacts remain the source of truth for
+# ticket/story status; this file stores only the SDLC overlay (position, gates,
+# decisions, pointers). Committed to git. The append-only audit trail lives in
+# .memlog.md beside this file.
+schema: bmad-sdlc/1
+project: null
+created: null
+updated: null
+
+bmad:
+  model: unknown          # v6 | current | unknown
+  memlog: null            # recorded at init; --memlog overrides
+  hub: null               # bmad | bmad-help
+  output_folder: _bmad-output
+  planning_artifacts: _bmad-output/planning-artifacts
+  implementation_artifacts: _bmad-output/implementation-artifacts
+  test_artifacts: _bmad-output/test-artifacts
+
+active_workstream: null
+
+# Workstreams are keyed by id, e.g. ws-001. See references/ledger-schema.md.
+# Each workstream carries: name, track, size, status, phases, gates (with
+# level), tickets (per-ticket gates), decisions, and a best-effort next cache.
+# An audit workstream uses one synthetic ticket, `audit`, whose `review` gate
+# is the required code review.
+workstreams: {}

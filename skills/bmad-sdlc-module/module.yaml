@@ -1,0 +1,12 @@
+name: BMAD SDLC Conductor
+code: bmad-sdlc
+version: 0.2.0
+description: >-
+  One front door for the whole BMAD software development lifecycle. Detects the
+  installed BMAD model, keeps a durable per-product plan, presents a phase/action
+  menu, hands each step to the right skill in a fresh context, and gates every
+  phase.
+author: bmad-sdlc
+skills:
+  - bmad-sdlc
+output_folder: "{output_folder}/sdlc"

@@ -1,0 +1,51 @@
+# DO NOT EDIT -- overwritten on every update.
+#
+# Workflow customization surface for bmad-sdlc.
+#
+# Override files (not edited here):
+#   {project-root}/_bmad/custom/bmad-sdlc.toml        (team)
+#   {project-root}/_bmad/custom/bmad-sdlc.user.toml   (personal)
+#
+# Merge rules: scalars override, arrays append, tables deep-merge.
+
+[workflow]
+
+# Steps to run before the standard activation (config load, greet).
+activation_steps_prepend = []
+
+# Steps to run after greet but before the first menu.
+activation_steps_append = []
+
+# Persistent facts the conductor keeps in mind for the whole run.
+# Each entry is a literal sentence, a `skill:` name, or a `file:` path/glob.
+persistent_facts = []
+
+# Durable plan. Committed to git so it survives sessions and machines.
+ledger_path = "{project-root}/_bmad-output/sdlc/plan.yaml"
+
+# Append-only audit trail. Passed to init/log as --memlog.
+memlog_path = "{project-root}/_bmad-output/sdlc/.memlog.md"
+
+# Initial ledger shape. Override to add organization-specific fields.
+ledger_template = "assets/plan-template.yaml"
+
+# Used only when the track cannot be detected from the request or the repo.
+default_track = "feature"
+
+# Used only when the size cannot be detected. One of:
+# trivial | one-session | epic | project
+# A fix or audit defaults to one-session regardless of this value.
+default_size = "epic"
+
+# When false, activation runs headless: no questions, no menu, emit a JSON
+# report and stop at the next gate. Irreversible actions still require consent.
+ask_at_every_gate = true
+
+# How to hand a phase to its skill:
+#   prefer  = fresh subagent when available, then inline, then user-run
+#   inline  = load the skill in this session
+#   user    = print a ready-to-paste prompt and wait
+handoff_preference = "prefer"
+
+# Offer party mode, elicitation, deep recon, and CIS helpers at relevant gates.
+include_advisory_skills = true
