@@ -4,7 +4,7 @@
 **Created:** 2026-11-12
 **Purpose:** a single front-door skill that conducts the whole BMAD SDLC across product, design, architecture, development, testing, and close-out, with a plan that survives session restarts.
 
-> **Resume here.** If a new session picks this up, read this document, then read `_bmad-output/sdlc/plan.yaml` and `_bmad-output/sdlc/.memlog.md`. Continue at the gate named by the ledger's `next_action`; [Build checklist](#build-checklist) is the completed build record, not the resume index. Do not re-litigate the decisions in [Decision log](#decision-log) unless the user asks.
+> **Resume here.** If a new session picks this up, read this document, then read `_bmad-output/sdlc/plan.yaml` and `_bmad-output/sdlc/.memlog.md`. Continue at the gate named by the ledger's `next_action`; the build record in `docs/bmad-sdlc-build.memlog.md` is the completed build history, not the resume index. Do not re-litigate the decisions in [Decision log](#decision-log) unless the user asks.
 
 ---
 
@@ -61,7 +61,7 @@ Decisions made with the user on 2026-11-12. Each is binding for this build unles
 | D21 | Menu structure | **Two-level: phase then action.** |
 | D22 | Gate UX | **Summary + four-way choice** (approve / revise / run reviewer / skip-with-override). |
 | D23 | Design doc location | **`docs/` + `_bmad-output/sdlc/`.** |
-| D24 | Review passes (2026-11-12) | **Gate state is authoritative, levels are derived.** See §8.2 for the corrections from the review passes. |
+| D24 | Review passes (2026-11-12) | **Gate state is authoritative, levels are derived.** See `docs/bmad-sdlc-build.memlog.md` for the corrections from the review passes. |
 
 ## 5. What BMAD actually says (grounding)
 
@@ -147,13 +147,13 @@ _bmad-output/sdlc/.memlog.md   # append-only audit trail
 | Fix | bug report / small intent | story/ticket → ATDD? → build → tests → review → trace |
 | Audit | existing code | code review → trace → test review / NFR (no net-new feature) |
 
-In the flow column, `?` marks an optional step. Sizing: `trivial` short-circuits to `build.ticket` → `build.review` → `build.done`; planning and verification gates are optional. `one-session` goes intent → build → review → done, with verification as needed. `epic` adds spec, stories, per-story build, retro. `project` adds shared contracts and repeats the epic path. A `fix` or `audit` with no size defaults to `one-session`, and a fix never inherits the epic planning set. Gate levels are resolved from track, size, and model, so `summary` never asks a trivial fix for a PRD or a trace matrix.
+In the flow column, `?` marks an optional step. Sizing: `trivial` short-circuits to `build.ticket` → `build.review` → `build.done`; planning and verification gates are optional. `one-session` goes intent → build → review → done, with verification as needed. `epic` adds spec, stories, per-story build, retro. `project` adds shared contracts and repeats the epic path. A `fix` or `audit` with no size defaults to `one-session`, and a fix never inherits the epic planning set. Gate levels are resolved from track, size, and model, so `summary` never recommends a PRD or a trace matrix for a trivial fix.
 
 ### 7.4 Gates
 
-Each phase has gates, and `references/gate-matrix.md` is the single authority for their levels, evidence, and pass criteria. Levels are resolved from track, size, and model by `scripts/sdlc_plan.py`; the matrix in that file is the human-readable copy.
+Each phase has gates, and `references/gate-matrix.md` is the single authority for their levels, evidence, and pass criteria. Levels are resolved from track, size, and model by `scripts/sdlc_plan.py`; the table in `gate-matrix.md` is the human-readable copy.
 
-Required gates block advancement unless overridden. Conditional gates are required when their condition is true; because the script cannot evaluate that condition, it asks for a reason on every required or conditional skip. Optional gates are offered and skippable.
+Required gates block advancement unless overridden. Conditional gates are required when their condition is true; because the script cannot evaluate that condition, the conductor asks for a reason on every required or conditional skip. Optional gates are offered and skippable.
 
 Gate interaction: show what the gate requires, what exists, the evidence, and the risk of advancing; then offer **Approve / Revise / Run reviewer / Skip with override**. Every outcome is logged.
 
@@ -184,7 +184,7 @@ Fallbacks: inline skill load; user-run prompt with a ready-to-paste brief; `bloc
 - decisions log
 - last computed next action, with a stale-cache flag
 
-BMAD artifacts remain truth for ticket/story status. On every activation, run `reconcile`, re-read the status surfaces, and apply the deltas. `{workflow.memlog_path}` is the append-only audit trail. `summary` computes phase completion, blocking gates, optional actions, and the next action; `done` closes a workstream only when every required/conditional gate is decided.
+BMAD artifacts remain truth for ticket/story status. On every activation, run `reconcile`, re-read the status surfaces, and apply the deltas. `{workflow.memlog_path}` is the append-only audit trail. `summary` computes phase completion, blocking gates, optional actions, and the next action; `done` closes a workstream only when every required/conditional gate is decided and every decided gate has artifact or phase evidence.
 
 ### 7.7 Version adapters
 
@@ -194,7 +194,7 @@ Detection is project-local. Skills visible in the session but absent under `{pro
 2. `bmad-create-epics-and-stories` present → **v6** model (`sprint-status.yaml`).
 3. Otherwise ambiguous → ask the user; never write an unconfirmed model.
 
-Skill aliases are resolved by availability: `bmad-prd` vs `bmad-agent-pm`; `bmad-create-epics-and-stories` vs `bmad-agent-po`; `bmad-sprint-planning` vs Sofia's `tickets.toml`; `bmad-testarch-*` vs `bmad-tea-*`. Missing skills degrade to the nearest available equivalent, or mark the action blocked with an install hint.
+Skill aliases are resolved by availability: `bmad-prd` vs `bmad-agent-pm`; `bmad-create-epics-and-stories` vs `bmad-agent-po`; `bmad-sprint-planning` vs Sofia's `tickets.toml`; `bmad-testarch-*` vs the single `bmad-tea` agent. A missing skill resolves to a listed alias when one is installed; otherwise the action is blocked with an install hint. Never invent `bmad-tea-<capability>` names.
 
 ### 7.8 Guardrails
 
@@ -205,59 +205,9 @@ Skill aliases are resolved by availability: `bmad-prd` vs `bmad-agent-pm`; `bmad
 - Never edit installer-managed `_bmad/_config/` files.
 - Keep `_bmad-output/sdlc/` committed; artifacts follow existing BMAD output rules.
 
-## 8. Build checklist
+## 8. Build record
 
-- [x] Design decisions captured and persisted (this document)
-- [x] Create ledger template `assets/plan-template.yaml`
-- [x] Create `scripts/sdlc_plan.py` (detect/init/validate/summary/set/append/ticket/done/migrate/resize/reconcile/verify-return/log)
-- [x] Add script tests (initial 14, now 70 passing)
-- [x] Write `references/phase-map.md`
-- [x] Write `references/gate-matrix.md`
-- [x] Write `references/ledger-schema.md`
-- [x] Write `references/version-adapters.md`
-- [x] Write `references/handoff-protocol.md`
-- [x] Write `references/menu.md`
-- [x] Write `SKILL.md`
-- [x] Write `customize.toml`
-- [x] Initialize `_bmad-output/sdlc/plan.yaml` for this repo
-- [x] Smoke-test: detect → init → summary → set → validate
-- [x] Package as a reusable module (setup skill + module manifest) at `skills/bmad-sdlc-module/`
-- [x] Verify no installer-managed files were modified (only `.agents/skills/bmad-sdlc/`, `skills/bmad-sdlc-module/`, `docs/`, `_bmad-output/sdlc/`, `.gitignore`)
-- [x] Backfill the build-process `.memlog.md` at `docs/bmad-sdlc-build.memlog.md`
-- [x] Run the BMAD lint gate (`quick_validate`, `scan-path-standards`, `scan-scripts`, `prepass-workflow-integrity`, `prepass-prompt-metrics`)
-- [x] Run the eval beat (`bmad-eval-runner`, quality mode; cases expanded with failure-mode rubrics)
-- [x] Run the Analyze lenses and render the HTML report
-- [x] Apply the review fixes (paths, track-aware gates, per-ticket gates, reconcile/verify-return, customization surface, description, packaging)
-- [x] Second review pass: audit routing, phase completion, `blocked` gates, override/order enforcement, multi-workstream init, `done`, docs alignment
-- [x] Re-run the ledger tests (29 passing) and the BMAD deterministic gates
-- [x] Third review pass: gate state is authoritative, levels are derived, write paths/values are validated, `init --force` is safe, `verify-return` requires artifacts, detection aliases and nested sprint status are fixed, `fix/one-session` starts at build, `reconcile` sees phase evidence
-- [x] Expanded the ledger regression suite to cover the bypasses and write-safety cases
-- [x] Re-ran the ledger tests, deterministic gates, and the eval quality suite
-
-### 8.1 BMAD builder gates (2026-11-12)
-
-The skill was built before the conductor existed, so the formal `bmad-workflow-builder` loop was applied retroactively to the deterministic gates.
-
-| Gate | Result |
-|---|---|
-| `quick_validate.py` | pass — no errors |
-| `prepass-workflow-integrity.py` | pass — no issues (after adding `## Overview`) |
-| `scan-scripts.py` | pass — no findings (after switching to `json.dumps` and `sys.exit`) |
-| `prepass-prompt-metrics.py` | 2,495 SKILL.md tokens; budget 2,500 — within budget, above the desired 1,500 tier |
-| `scan-path-standards.py` | pass — the authoring `.memlog.md` moved to `docs/bmad-sdlc-build.memlog.md` and is excluded from packaging |
-| Eval beat | The ten quality cases run headless for the routing cases and reach `build.ticket`; the audit case reports `blocked` when no review skill is installed, and `continue-with-ledger` resumes the staged workstream and its recorded gate. Quality mode captures transcripts but does not grade them, so a score is only valid with its grader output beside the run; do not cite a rubric count without that artifact. Trigger mode remains unusable with the stock opencode adapter (tool-event shape), and case metadata can be read from above `cwd`; the skill's guardrails forbid reading it. See `.agents/skills/bmad-sdlc/evals/README.md`. |
-| Analyze lenses | **fair** — 0 critical / 8 high / 15 medium / 7 low; the high findings and the gate/path issues are fixed |
-| Second review pass | Blocking state-machine and eval issues fixed; 54 ledger tests passed. |
-| Third review pass | Guardrails, evidence, routing, the audit trail, and doc drift fixed; 70 ledger tests pass. |
-
-The build-process memlog records the decisions, the build event, the lint gate, the review, and the fixes. It is the resume trail for the next builder session.
-
-### 8.2 Review fixes (2026-11-12)
-
-- **Audit and state machine.** Audit uses a synthetic ticket and advances through verify; phase completion is computed from phase and ticket gates; `blocked` is a legal gate status; ticket gates are ordered; `init` appends/pauses workstreams; `fix`/`audit` default to one-session; `resize` removes a no-longer-needed audit ticket and reopens phases whose new levels demand gates.
-- **Gate state is authoritative, levels are derived.** `summary`/`done` see gates in a phase marked done/skipped; `set phases.*.status=done` refuses while an earlier or own gate is open; `set` rejects derived fields (`phases.*.gate`, `gates.*.level`) and node writes without `--replace --reason`; `resize`/`migrate`/`bmad.model` rewrite levels and repair skipped phases.
-- **Evidence and the audit trail.** `verify-return` checks the configured `--memlog` and requires a file; `done` re-checks artifact and phase evidence, refuses a blocked phase, and reports ledger tickets missing from BMAD artifacts (with explicit accept flags); every `set`/`append`/`ticket`/`done`/`resize`/`reconcile` write reaches the audit trail, including a custom `--memlog` recorded at `init`; writes preserve the file mode and roll back the ledger if the audit append fails.
-- **Routing.** `fix`/`audit` ignore `--default-size`; `bmad-spec` aliases to `bmad-agent-po` under the current model; `locked_phases` covers every later phase, not only those with no gates of their own; `complete` chains from earlier phases so `close` cannot look done at activation.
+The build checklist, the BMAD builder gate results, and the review-fix detail live in `docs/bmad-sdlc-build.memlog.md`. This document keeps the decisions (§4), architecture (§7), acceptance criteria (§9), and risks (§10). The verification surface is in `AGENTS.md` §Running and verifying.
 
 ## 9. Acceptance criteria
 

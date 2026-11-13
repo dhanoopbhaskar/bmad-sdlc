@@ -16,7 +16,7 @@ updated: 2026-11-12T16:42:00+05:30
 
 bmad:
   model: v6                         # v6 | current | unknown
-  memlog: _bmad-output/sdlc/.memlog.md  # recorded at init; --memlog overrides
+  memlog: _bmad-output/sdlc/.memlog.md
   hub: bmad-help                    # bmad | bmad-help | null
   output_folder: _bmad-output
   planning_artifacts: _bmad-output/planning-artifacts
@@ -89,7 +89,7 @@ workstreams:
           override_reason: null
         sprint:
           status: open
-          level: required           # v6 + epic/project only; otherwise optional
+          level: required
           decided_at: null
           override_reason: null
         ux:
@@ -115,7 +115,7 @@ workstreams:
         retro: {status: open, level: optional, decided_at: null, override_reason: null}
         walkthrough: {status: open, level: optional, decided_at: null, override_reason: null}
 
-    tickets:                        # per-ticket gate state; ticket status stays in BMAD artifacts
+    tickets:
       "1-3-ticket-menu":
         title: "Ticket menu"
         gates:
@@ -129,7 +129,7 @@ workstreams:
         decision: "Skipped UX; this is a CLI-only tool."
         reason: "No user-facing UI."
 
-    next:                           # optional cache; recompute on activation
+    next:                           # optional cache
       phase: plan
       action: plan.stories
       skill: bmad-create-epics-and-stories
@@ -149,7 +149,7 @@ workstreams:
 | `gates.<phase>.<name>.status` | One of `open`, `passed`, `overridden`, `skipped`, `blocked`. `blocked` means the evidence pointer is missing; it is not a pass. |
 | `gates.<phase>.<name>.level` | `required`, `conditional`, or `optional`. **Derived** from track/size/model; the stored value is a cache. `summary`/`done` always use the resolver, and `validate` reports drift. `resize` or `migrate` rewrites it. |
 | `tickets.<id>.gates.<gate>.status` | One of `open`, `passed`, `overridden`, `skipped`, `blocked`. Gates are `ticket`, `tests`, `review`, `done`. |
-| `override_reason` | Required when a required or conditional gate is `overridden`, and when a required gate is `skipped`; the script and `validate` enforce it. Not required for `blocked` (the missing pointer is the reason) or for an optional gate. `validate` warns on an unreasoned conditional `skipped`. |
+| `override_reason` | Required when a required or conditional gate is `overridden` or `skipped`; `set`, `ticket`, and `validate` all enforce it as an error. Not required for `blocked` (the missing pointer is the reason) or for an optional gate. The authoritative rule is `gate-matrix.md` §Override rules. A decided gate's reason and `decided_at` cannot be cleared while the gate is decided. |
 | `decisions` | Append-only list of `{at, decision, reason}`. `set` refuses to write it; use `append`, which fills `at` when missing. Never edit or delete. |
 | `next` | Written by mutating commands after they refresh the workstream. `summary` recomputes and reports `next_action_stale` only when a hand edit disagrees. |
 
@@ -157,7 +157,7 @@ workstreams:
 
 Every operation prints JSON. Mutating operations are atomic and take a file lock around the read-modify-write cycle; reads do not write. Run with `uv run --no-cache`.
 
-`summary` reports gate levels, `blocking` ids, per-phase `complete`, ticket gates, `blocked_gates`, `optional_actions`, `locked_phases`, `memlog`, `phase`, `workstreams_detail`, and the recomputed `next_action`. It always returns the full shape, including when `active_workstream` is null. A phase is `complete` only after every earlier phase is complete, so `close` cannot look done at activation. Use `done` to close a workstream; it refuses while any required or conditional gate is open or blocked, including per-ticket gates and a missing audit review, and it refuses a missing artifact, a blocked phase, or a ledger ticket absent from the BMAD artifacts unless the user accepts the gap with `--reason`. An audit's required code review is the `review` gate on the synthetic `audit` ticket.
+`summary` reports gate levels, `blocking` ids, per-phase `complete`, ticket gates, `blocked_gates`, `optional_actions`, `locked_phases`, `memlog`, `phase`, `workstreams_detail`, and the recomputed `next_action`. It always returns the full shape, including when `active_workstream` is null; a closed workstream still supplies the last recorded `track`, `size`, and `phase`. A phase is `complete` only after every earlier phase is complete, so `close` cannot look done at activation. Use `done` to close a workstream; it refuses while any required or conditional gate is open or blocked, including per-ticket gates and a missing audit review, and it refuses a missing artifact, a decided gate with no artifact or phase evidence, a blocked phase, or a ledger ticket absent from the BMAD artifacts unless the user accepts the gap with `--reason`. An audit's synthetic `audit` ticket is exempt from the ticket-overlay check. An audit's required code review is the `review` gate on that ticket.
 
 | `summary` field | Meaning |
 |---|---|
@@ -177,6 +177,8 @@ Every operation prints JSON. Mutating operations are atomic and take a file lock
 uv run --no-cache {skill-root}/scripts/sdlc_plan.py detect --project-root {project-root}
 
 # Create the ledger (first run only). Always pass the resolved paths.
+# A relative --template resolves against {project-root} first, then the skill
+# root; an absolute path avoids the ambiguity.
 uv run --no-cache {skill-root}/scripts/sdlc_plan.py init \
   --project-root {project-root} \
   --plan {workflow.ledger_path} --memlog {workflow.memlog_path} \
@@ -204,6 +206,8 @@ uv run --no-cache {skill-root}/scripts/sdlc_plan.py set --plan <ledger> \
 # set rejects derived state (phases.<phase>.gate, gates.*.level) and whole-node
 # writes without --replace --reason. --root is for document paths only;
 # --workstream is for workstream fields. --reason is only for an override or skip.
+# A decided gate's override_reason and decided_at cannot be cleared, a blocked
+# gate cannot be set passed, and only one phase may be active at a time.
 # Pausing clears active_workstream; resume with --workstream <id> --path status
 # --value active so a new session has an unambiguous target.
 
@@ -243,8 +247,10 @@ uv run --no-cache {skill-root}/scripts/sdlc_plan.py reconcile \
   --plan <ledger> --project-root {project-root} --write \
   --memlog {workflow.memlog_path}
 
-# Validate a handoff return. A done return needs an artifact; open questions
-# block unless --accept-questions is passed.
+# Validate a handoff return. A done return needs an artifact; a supplied
+# evidence list must be non-empty and resolve inside the project root. Open
+# questions block unless --accept-questions is passed, which logs the accepted
+# questions to the audit trail.
 uv run --no-cache {skill-root}/scripts/sdlc_plan.py verify-return \
   --plan <ledger> --memlog {workflow.memlog_path} \
   --project-root {project-root} --return-file <json>
@@ -263,21 +269,11 @@ If `uv` is unavailable, read and write the YAML directly with the same shape, ke
 
 ## Resume semantics
 
-On activation:
+The ordered activation sequence is in `SKILL.md` §On Activation; it runs `detect`, `reconcile`, `summary`, then the menu. The ledger-only deltas are:
 
-1. Read `plan.yaml` and `.memlog.md`.
-2. Run `detect` and reconcile `bmad.model` if it changed: pass `--model` to `init`, or use `set --path bmad.model --value <model>`. A silent `unknown` detection must not overwrite a confirmed model.
-3. Read the active workstream's BMAD artifacts (PRD/spec, stories/tickets, sprint status, build plans).
-4. Reconcile:
-   - artifact exists, pointer missing → run `reconcile --write` to set it, or set it with `set`; log.
-   - pointer set, artifact missing → leave pointer, set the affected gate(s) to `blocked` (using `gates_to_block` from `reconcile`), and report the expected path. Do not silently substitute a path outside `{project-root}`.
-   - phase evidence missing → set the phase(s) in `phases_to_block` to `blocked` and report `missing_evidence`.
-   - ticket status disagrees with the ledger → artifact wins; update the ledger, log the correction.
-5. Recompute the next action from the phase, gate levels, and ticket gates. `summary` does this and reports `next_action_stale` when the cached `next` disagrees. Mutating commands refresh `current_phase` and `next`.
-6. Show the dashboard and menu. Do not re-interview the user about settled decisions.
-7. If the user only asks for status and no ledger exists, report the absence and offer to start. Do not create a ledger from invented defaults.
-
-If the ledger is corrupt, run `validate`. If you cannot repair it, back it up to `plan.yaml.bak`, re-run `init` (ideally `--force --reason` so the script writes the backup and audit event), and offer to re-import pointers from the artifacts. Never silently discard the old file.
+- **Model change.** Use `set --path bmad.model --value <model>` on an existing ledger (pass `--model` to `init` only when creating it). A silent `unknown` must not overwrite a confirmed model, and `init --model unknown` refuses a downgrade without `--force --reason`.
+- **Pointer cases.** Artifact exists, pointer missing → `reconcile --write`. Pointer set, artifact missing → set the affected gate(s) from `gates_to_block` to `blocked` and report the expected path. Phase evidence missing → set the phase(s) in `phases_to_block` to `blocked`. Ticket status disagrees → artifacts win; update the ledger and log the correction. Never substitute a path outside `{project-root}`.
+- **Corruption.** Run `validate`. If unrepairable, back up to `plan.yaml.bak`, re-run `init --force --reason`, and offer to re-import pointers from the artifacts. Never silently discard the old file.
 
 ## Multiple workstreams
 
@@ -286,4 +282,4 @@ If the ledger is corrupt, run `validate`. If you cannot repair it, back it up to
 - The status dashboard lists every workstream with track, size, status, and next action.
 - `validate` rejects more than one `status: active` workstream and an `active_workstream` that is not active.
 - A paused workstream has no `next_action`; resume it before continuing or closing.
-- A workstream is `done` when its required gates are passed and no epic remains open; use `done`, not a manual status edit. Do not delete it; it is the history.
+- A workstream is `done` when every required and conditional gate is decided (passed, overridden, or skipped with a reason), every decided gate has artifact or phase evidence, and no epic remains open; use `done`, not a manual status edit. Do not delete it; it is the history.

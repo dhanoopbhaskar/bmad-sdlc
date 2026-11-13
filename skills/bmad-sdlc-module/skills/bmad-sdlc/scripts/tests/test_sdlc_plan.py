@@ -84,6 +84,10 @@ class LedgerTests(unittest.TestCase):
             raise AssertionError(result.stderr)
 
     def test_detect_reports_v6_for_this_repo(self) -> None:
+        if not (
+            REPO_ROOT / ".agents" / "skills" / "bmad-create-epics-and-stories"
+        ).is_dir():
+            self.skipTest("authoring-repo-only assertion")
         payload = run("detect", "--project-root", str(REPO_ROOT))
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["model"], "v6")
@@ -478,10 +482,24 @@ class LedgerTests(unittest.TestCase):
             "--value",
             "passed",
         )
+        trace = self.tmp / "_bmad-output" / "test-artifacts" / "trace.md"
+        trace.parent.mkdir(parents=True, exist_ok=True)
+        trace.write_text("# trace\n", encoding="utf-8")
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "artifacts.trace",
+            "--value",
+            "_bmad-output/test-artifacts/trace.md",
+        )
         summary = run("summary", "--plan", str(self.ledger))
         self.assertEqual(summary["next_action"]["action"], "close.mark_done")
         done = run("done", "--plan", str(self.ledger))
-        self.assertTrue(done["ok"])
+        self.assertTrue(done["ok"], done)
         summary = run("summary", "--plan", str(self.ledger), "--workstream", "ws-001")
         self.assertEqual(summary["workstream"]["status"], "done")
 
@@ -515,8 +533,22 @@ class LedgerTests(unittest.TestCase):
                 "skipped" if gate != "trace" else "passed",
                 *extra,
             )
+        trace = self.tmp / "_bmad-output" / "test-artifacts" / "trace.md"
+        trace.parent.mkdir(parents=True, exist_ok=True)
+        trace.write_text("# trace\n", encoding="utf-8")
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "artifacts.trace",
+            "--value",
+            "_bmad-output/test-artifacts/trace.md",
+        )
         done = run("done", "--plan", str(self.ledger))
-        self.assertTrue(done["ok"])
+        self.assertTrue(done["ok"], done)
 
     def test_trivial_completion_recommends_mark_done(self) -> None:
         self.init_track("fix", "trivial")
@@ -1278,6 +1310,9 @@ class LedgerTests(unittest.TestCase):
             self.assertIn(key, summary)
         self.assertIsNone(summary["next_action"])
         self.assertIsNone(summary["active_workstream"])
+        self.assertEqual(summary["track"], "fix")
+        self.assertEqual(summary["size"], "trivial")
+        self.assertEqual(summary["phase"], "close")
 
     def test_current_phase_and_next_cache_refresh(self) -> None:
         self.init()
@@ -1816,6 +1851,560 @@ class LedgerTests(unittest.TestCase):
         )
         self.assertTrue(allowed["ok"], allowed)
         self.assertTrue(run("validate", "--plan", str(self.ledger))["ok"])
+
+    def test_init_expands_the_project_root_token(self) -> None:
+        payload = run(
+            "init",
+            "--project-root",
+            str(self.tmp),
+            "--name",
+            "Token",
+            "--track",
+            "feature",
+            "--size",
+            "epic",
+            "--plan",
+            "{project-root}/_bmad-output/sdlc/plan.yaml",
+        )
+        self.assertTrue(payload["ok"], payload)
+        self.assertTrue(self.ledger.is_file())
+        self.assertFalse((self.tmp / "{project-root}").exists())
+
+    def test_second_init_without_memlog_uses_the_recorded_path(self) -> None:
+        trail = self.tmp / "audit" / "trail.md"
+        run(
+            "init",
+            "--project-root",
+            str(self.tmp),
+            "--name",
+            "First",
+            "--track",
+            "feature",
+            "--size",
+            "epic",
+            "--memlog",
+            str(trail),
+        )
+        run(
+            "init",
+            "--project-root",
+            str(self.tmp),
+            "--name",
+            "Second",
+            "--track",
+            "fix",
+        )
+        text = trail.read_text(encoding="utf-8")
+        self.assertIn("workstream ws-002 created", text)
+        self.assertFalse((self.ledger.parent / ".memlog.md").exists())
+
+    def test_init_merges_template_bmad_keys(self) -> None:
+        template = self.tmp / "template.yaml"
+        template.write_text(
+            "schema: bmad-sdlc/1\n"
+            "project: null\ncreated: null\nupdated: null\n"
+            "bmad:\n  model: unknown\n  custom_key: keep-me\n"
+            "active_workstream: null\nworkstreams: {}\n",
+            encoding="utf-8",
+        )
+        payload = run(
+            "init",
+            "--project-root",
+            str(self.tmp),
+            "--name",
+            "Custom",
+            "--track",
+            "feature",
+            "--size",
+            "epic",
+            "--template",
+            str(template),
+        )
+        self.assertTrue(payload["ok"], payload)
+        self.assertIn("custom_key: keep-me", self.ledger.read_text(encoding="utf-8"))
+
+    def test_init_rejects_a_non_mapping_template(self) -> None:
+        template = self.tmp / "template.yaml"
+        template.write_text("- one\n- two\n", encoding="utf-8")
+        payload = run(
+            "init",
+            "--project-root",
+            str(self.tmp),
+            "--name",
+            "Bad",
+            "--track",
+            "feature",
+            "--template",
+            str(template),
+        )
+        self.assertFalse(payload["ok"])
+        self.assertIn("root must be a mapping", payload["error"])
+
+    def test_init_refuses_to_downgrade_a_confirmed_model(self) -> None:
+        self.init()
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--path",
+            "bmad.model",
+            "--value",
+            "current",
+        )
+        refused = run(
+            "init",
+            "--project-root",
+            str(self.tmp),
+            "--name",
+            "Other",
+            "--track",
+            "feature",
+            "--model",
+            "unknown",
+        )
+        self.assertFalse(refused["ok"])
+        self.assertIn("downgrade", refused["error"])
+
+    def test_init_rejects_a_duplicate_explicit_workstream_id(self) -> None:
+        self.init()
+        refused = run(
+            "init",
+            "--project-root",
+            str(self.tmp),
+            "--name",
+            "Other",
+            "--track",
+            "feature",
+            "--workstream",
+            "ws-001",
+        )
+        self.assertFalse(refused["ok"])
+        self.assertIn("already exists", refused["error"])
+        summary = run("summary", "--plan", str(self.ledger), "--workstream", "ws-001")
+        self.assertEqual(summary["workstream"]["name"], "Test Product")
+
+    def test_detect_excludes_the_conductor_from_the_skill_inventory(self) -> None:
+        if not (
+            REPO_ROOT / ".agents" / "skills" / "bmad-create-epics-and-stories"
+        ).is_dir():
+            self.skipTest("authoring-repo-only assertion")
+        payload = run("detect", "--project-root", str(REPO_ROOT))
+        self.assertEqual(payload["model"], "v6")
+        self.assertNotIn("bmad-sdlc", payload["skills"])
+
+    def test_auto_skipped_phases_record_a_reason(self) -> None:
+        self.init_track("fix", "trivial")
+        summary = run("summary", "--plan", str(self.ledger))
+        plan = next(item for item in summary["phases"] if item["phase"] == "plan")
+        self.assertEqual(plan["status"], "skipped")
+        self.assertIn("auto-skipped", plan["note"])
+
+    def test_set_rejects_a_direct_workstreams_path(self) -> None:
+        self.init()
+        refused = run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--path",
+            "workstreams.ws-001.status",
+            "--value",
+            "paused",
+        )
+        self.assertFalse(refused["ok"])
+        self.assertIn("--workstream", refused["error"])
+
+    def test_set_refuses_to_clear_a_decided_override_reason(self) -> None:
+        self.init()
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "gates.plan.ux.status",
+            "--value",
+            "overridden",
+            "--reason",
+            "CLI only",
+        )
+        refused = run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "gates.plan.ux.override_reason",
+            "--null",
+        )
+        self.assertFalse(refused["ok"])
+        self.assertIn("cannot clear decided gate metadata", refused["error"])
+
+    def test_set_refuses_to_pass_a_blocked_gate(self) -> None:
+        self.init()
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "gates.plan.requirements.status",
+            "--value",
+            "blocked",
+        )
+        refused = run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "gates.plan.requirements.status",
+            "--value",
+            "passed",
+        )
+        self.assertFalse(refused["ok"])
+        self.assertIn("blocked gate cannot be passed", refused["error"])
+
+    def test_set_refuses_a_second_active_phase(self) -> None:
+        self.init()
+        refused = run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "phases.solution.status",
+            "--value",
+            "active",
+        )
+        self.assertFalse(refused["ok"])
+        self.assertIn("only one phase may be active", refused["error"])
+
+    def test_append_rejects_empty_evidence(self) -> None:
+        self.init()
+        refused = run(
+            "append",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "phases.plan.evidence",
+            "--null",
+        )
+        self.assertFalse(refused["ok"])
+        self.assertIn("non-empty", refused["error"])
+
+    def test_resize_refuses_a_done_workstream(self) -> None:
+        self.init()
+        self.edit_ledger("data['workstreams']['ws-001']['status'] = 'done'")
+        refused = run(
+            "resize",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--size",
+            "project",
+        )
+        self.assertFalse(refused["ok"])
+        self.assertIn("done", refused["error"])
+
+    def test_done_refuses_a_skipped_build_with_no_ticket(self) -> None:
+        self.init_track("fix", "trivial")
+        self.edit_ledger(
+            "data['workstreams']['ws-001']['phases']['build']['status'] = 'skipped'"
+        )
+        payload = run("done", "--plan", str(self.ledger))
+        self.assertFalse(payload["ok"])
+        self.assertIn("no ticket built", payload["error"])
+
+    def test_audit_ticket_is_exempt_from_the_overlay_check(self) -> None:
+        self.init_track("audit", "one-session")
+        implementation = (
+            self.tmp / "_bmad-output" / "implementation-artifacts" / "tickets"
+        )
+        implementation.mkdir(parents=True)
+        (implementation / "tickets.toml").write_text(
+            "[tickets.T1]\ntitle = \"T1\"\n", encoding="utf-8"
+        )
+        run(
+            "ticket",
+            "--plan",
+            str(self.ledger),
+            "--id",
+            "audit",
+            "--gate",
+            "review",
+            "--status",
+            "passed",
+        )
+        for gate in ("test_review", "nfr", "trace"):
+            extra = [] if gate == "trace" else ["--reason", "not applicable"]
+            run(
+                "set",
+                "--plan",
+                str(self.ledger),
+                "--workstream",
+                "ws-001",
+                "--path",
+                f"gates.verify.{gate}.status",
+                "--value",
+                "passed" if gate == "trace" else "skipped",
+                *extra,
+            )
+        trace = self.tmp / "_bmad-output" / "test-artifacts" / "trace.md"
+        trace.parent.mkdir(parents=True, exist_ok=True)
+        trace.write_text("# trace\n", encoding="utf-8")
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "artifacts.trace",
+            "--value",
+            "_bmad-output/test-artifacts/trace.md",
+        )
+        payload = run("done", "--plan", str(self.ledger))
+        self.assertTrue(payload["ok"], payload)
+
+    def test_done_requires_evidence_and_its_accept_flag_needs_a_reason(self) -> None:
+        self.init_track("fix", "one-session")
+        for gate in ("ticket", "tests", "review", "done"):
+            run(
+                "ticket",
+                "--plan",
+                str(self.ledger),
+                "--id",
+                "T1",
+                "--gate",
+                gate,
+                "--status",
+                "passed",
+            )
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "gates.verify.trace.status",
+            "--value",
+            "passed",
+        )
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "artifacts.trace",
+            "--value",
+            "missing-trace.md",
+        )
+        refused = run("done", "--plan", str(self.ledger))
+        self.assertFalse(refused["ok"])
+        self.assertIn("missing evidence", refused["error"])
+        refused = run(
+            "done", "--plan", str(self.ledger), "--accept-missing-evidence"
+        )
+        self.assertFalse(refused["ok"])
+        self.assertIn("--accept-missing-evidence needs --reason", refused["error"])
+        accepted = run(
+            "done",
+            "--plan",
+            str(self.ledger),
+            "--accept-missing-evidence",
+            "--reason",
+            "accepted for the test",
+        )
+        self.assertTrue(accepted["ok"], accepted)
+
+    def test_reconcile_and_done_report_ticket_overlay_drift(self) -> None:
+        self.init_track("fix", "trivial")
+        implementation = (
+            self.tmp / "_bmad-output" / "implementation-artifacts" / "tickets"
+        )
+        implementation.mkdir(parents=True)
+        (implementation / "tickets.toml").write_text(
+            "[tickets.T1]\ntitle = \"T1\"\n", encoding="utf-8"
+        )
+        for gate in ("ticket", "tests", "review", "done"):
+            run(
+                "ticket",
+                "--plan",
+                str(self.ledger),
+                "--id",
+                "T2",
+                "--gate",
+                gate,
+                "--status",
+                "passed",
+            )
+        reconciled = run(
+            "reconcile", "--plan", str(self.ledger), "--project-root", str(self.tmp)
+        )
+        self.assertEqual(
+            reconciled["workstreams"][0]["tickets_missing_in_ledger"], ["T1"]
+        )
+        self.assertEqual(
+            reconciled["workstreams"][0]["tickets_missing_in_artifacts"], ["T2"]
+        )
+        refused = run("done", "--plan", str(self.ledger))
+        self.assertFalse(refused["ok"])
+        self.assertIn("ledger tickets not found", refused["error"])
+
+    def test_reconcile_reports_ambiguous_artifact_matches(self) -> None:
+        self.init()
+        planning = self.tmp / "_bmad-output" / "planning-artifacts"
+        for name in ("one", "two"):
+            target = planning / name
+            target.mkdir(parents=True)
+            (target / "SPEC.md").write_text("# spec\n", encoding="utf-8")
+        payload = run(
+            "reconcile", "--plan", str(self.ledger), "--project-root", str(self.tmp)
+        )
+        ambiguous = payload["workstreams"][0]["ambiguous_pointers"]
+        self.assertTrue(any(item.startswith("spec:") for item in ambiguous), ambiguous)
+
+    def test_verify_return_file_and_empty_artifact_flag(self) -> None:
+        self.init()
+        artifact = self.tmp / "artifact.md"
+        artifact.write_text("# artifact\n", encoding="utf-8")
+        return_file = self.tmp / "return.json"
+        return_file.write_text(
+            json.dumps(
+                {"status": "done", "artifacts": [{"path": "artifact.md"}]}
+            ),
+            encoding="utf-8",
+        )
+        payload = run(
+            "verify-return",
+            "--plan",
+            str(self.ledger),
+            "--project-root",
+            str(self.tmp),
+            "--return-file",
+            str(return_file),
+        )
+        self.assertTrue(payload["ok"], payload)
+        refused = run(
+            "verify-return",
+            "--plan",
+            str(self.ledger),
+            "--project-root",
+            str(self.tmp),
+            "--return",
+            '{"status":"done"}',
+        )
+        self.assertFalse(refused["ok"])
+        self.assertIn("no artifacts returned", " ".join(refused["reasons"]))
+        allowed = run(
+            "verify-return",
+            "--plan",
+            str(self.ledger),
+            "--project-root",
+            str(self.tmp),
+            "--return",
+            '{"status":"done"}',
+            "--allow-empty-artifacts",
+        )
+        self.assertTrue(allowed["ok"], allowed)
+
+    def test_verify_return_rejects_zero_byte_artifacts(self) -> None:
+        self.init()
+        empty = self.tmp / "empty.md"
+        empty.write_text("", encoding="utf-8")
+        payload = run(
+            "verify-return",
+            "--plan",
+            str(self.ledger),
+            "--project-root",
+            str(self.tmp),
+            "--return",
+            '{"status":"done","artifacts":[{"path":"empty.md"}]}',
+        )
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["missing_artifacts"], ["empty.md"])
+
+    def test_verify_return_logs_accepted_open_questions(self) -> None:
+        self.init()
+        artifact = self.tmp / "artifact.md"
+        artifact.write_text("# artifact\n", encoding="utf-8")
+        payload = run(
+            "verify-return",
+            "--plan",
+            str(self.ledger),
+            "--project-root",
+            str(self.tmp),
+            "--return",
+            '{"status":"done","artifacts":[{"path":"artifact.md"}],'
+            '"open_questions":["which region?"]}',
+            "--accept-questions",
+        )
+        self.assertTrue(payload["ok"], payload)
+        memlog = run("summary", "--plan", str(self.ledger))["memlog"]
+        self.assertIn(
+            "accepted open questions: which region?",
+            Path(memlog).read_text(encoding="utf-8"),
+        )
+
+    def test_config_precedence_and_token_substitution(self) -> None:
+        self.init()
+        bmad = self.tmp / "_bmad"
+        bmad.mkdir(parents=True)
+        (bmad / "config.toml").write_text(
+            "[core]\noutput_folder = \"{project-root}/base-out\"\n"
+            "[modules.tea]\ntest_artifacts = \"{project-root}/base-tests\"\n",
+            encoding="utf-8",
+        )
+        payload = run("detect", "--project-root", str(self.tmp))
+        self.assertEqual(
+            payload["paths"]["output_folder"], str((self.tmp / "base-out").resolve())
+        )
+        self.assertEqual(
+            payload["paths"]["test_artifacts"],
+            str((self.tmp / "base-tests").resolve()),
+        )
+        (bmad / "config.user.toml").write_text(
+            "[core]\noutput_folder = \"{project-root}/user-out\"\n",
+            encoding="utf-8",
+        )
+        payload = run("detect", "--project-root", str(self.tmp))
+        self.assertEqual(
+            payload["paths"]["output_folder"], str((self.tmp / "user-out").resolve())
+        )
+        custom = bmad / "custom"
+        custom.mkdir()
+        (custom / "config.toml").write_text(
+            "[core]\noutput_folder = \"{project-root}/custom-out\"\n",
+            encoding="utf-8",
+        )
+        payload = run("detect", "--project-root", str(self.tmp))
+        self.assertEqual(
+            payload["paths"]["output_folder"], str((self.tmp / "custom-out").resolve())
+        )
+
+    def test_package_check_reports_no_drift(self) -> None:
+        script = REPO_ROOT / "skills" / "bmad-sdlc-module" / "scripts" / "package.sh"
+        if not script.is_file():
+            self.skipTest("packaging is authoring-repo-only")
+        result = subprocess.run(
+            ["bash", str(script), "--check"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

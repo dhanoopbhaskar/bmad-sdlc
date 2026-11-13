@@ -28,7 +28,7 @@ A gate is a checkpoint between the conductor and the human. The ledger records t
 
 `build.ticket`, `build.tests`, `build.review`, and `build.done` are per-ticket. Record them under `tickets.<id>.gates` with the `ticket` script command. The ledger stores per-ticket gate outcomes and a pointer to the evidence; it does not duplicate ticket status.
 
-An `audit` has no build tickets: its required code review is the `review` gate on the synthetic `audit` ticket. `build.done` is optional for an audit.
+An `audit` has no build tickets: its required code review is the `review` gate on the synthetic `audit` ticket. `build.done` is optional for an audit. For an `audit`, every `plan.*` gate resolves `optional`, `verify.trace` is required, and `verify.nfr` / `verify.test_review` are conditional.
 
 ## Gate interaction
 
@@ -63,6 +63,6 @@ A phase is `done` when:
 
 `summary` reports `complete` per phase and `blocking` gate ids. Set a phase `done` only when it is complete; `set phases.<phase>.status done` refuses while a required or conditional gate is open or an earlier phase is undecided. A phase status is a cache: if a phase is already marked `done`/`skipped`, `summary` and `done` still see any open gate in it and report the inconsistency. Fix the gates, not the status.
 
-When every phase is complete, `summary` recommends `close.mark_done`; `sdlc_plan.py done` refuses while any required or conditional gate is open or blocked, including per-ticket gates and a missing audit review. When no gate is open, it marks the workstream done. Never close on an override alone.
+When every phase is complete, `summary` recommends `close.mark_done`; `sdlc_plan.py done` refuses while any required or conditional gate is open or blocked, including per-ticket gates and a missing audit review. It also refuses a decided required or conditional gate that has no artifact pointer and no phase evidence: a passed gate without evidence is not a pass. When no gate is open and every decided gate has evidence, it marks the workstream done. Never close on an override alone.
 
 A phase may be skipped with a recorded reason once its gates are decided (or it has only optional gates). `reconcile` reports `missing_evidence` and `phases_to_block`; set those phases `blocked` and resolve the path. Reconciliation lives in `references/ledger-schema.md` § Resume semantics.

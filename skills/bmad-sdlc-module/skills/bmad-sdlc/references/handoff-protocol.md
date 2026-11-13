@@ -4,7 +4,7 @@ BMAD recommends a fresh chat for each workflow to avoid context mixing. The cond
 
 ## Ladder
 
-Use the first rung that is available, starting at the rung named by `{workflow.handoff_preference}`:
+Start at the rung named by `{workflow.handoff_preference}` and descend to the first rung that is available:
 
 1. **Fresh subagent** — spawn a subagent seeded with the brief below. It loads the target skill and does the work. The conductor's context stays clean.
 2. **Inline skill load** — load the target skill into the current session and run it. Warn that context is shared; prefer inline only for small steps.
@@ -67,12 +67,12 @@ Return exactly this JSON:
 The conductor accepts a result only when:
 
 - `status` is `done`, and
-- at least one artifact is claimed, it exists on disk, and it is inside `{project-root}`, and
+- at least one artifact is claimed, it exists on disk, is non-empty, and is inside `{project-root}`, and
 - no artifact is the ledger or the audit trail, and
-- the gate criteria are evidenced (not merely asserted), and
-- `open_questions` is empty, or `verify-return --accept-questions` records them as accepted.
+- the gate criteria are evidenced (not merely asserted): a supplied `evidence` list is non-empty and every entry exists inside `{project-root}`, and
+- `open_questions` is empty, or `verify-return --accept-questions` records them as accepted in the audit trail.
 
-Run `verify-return` with `--memlog {workflow.memlog_path}` so a custom audit path is checked. `--allow-empty-artifacts` is only for an action whose brief explicitly produces no file.
+Run `verify-return` with `--memlog {workflow.memlog_path}` so a custom audit path is checked. `--allow-empty-artifacts` is only for an action whose brief explicitly produces no file; it does not waive missing evidence.
 
 If `status` is `blocked` or `needs_input`, do not update the ledger to `done`. Record the blocker, present it to the user, and offer: answer and retry, switch to inline, or skip with override.
 
@@ -80,7 +80,7 @@ If the subagent claims success but the artifact is missing, treat it as `blocked
 
 ## Validation checklist
 
-Before accepting any handoff, the return contract above is satisfied, and then:
+Before accepting any handoff, confirm the return contract above is satisfied, then check:
 
 1. **Scope** matches the action; a PRD is not a spec, a story is not an epic.
 2. **No ledger edits** by the subagent; `ledger_touched` is advisory, so confirm the ledger content is unchanged.
@@ -128,4 +128,4 @@ It does not keep the full text of every artifact in context. Re-read what the ne
 
 - Plan actions may run in parallel when they share inputs and do not depend on each other (e.g., research + brief). The conductor asks once.
 - Build actions run one ticket per session. Parallel tickets are allowed only when their boundaries are explicit and the user accepts the merge risk.
-- The script serializes ledger and audit writes with a sibling `.lock` file, but still never run two actions that write the same artifact or the same ledger section concurrently.
+- The script serializes ledger and audit writes with a sibling `.lock` file, but never run two actions that write the same artifact or the same ledger section concurrently.

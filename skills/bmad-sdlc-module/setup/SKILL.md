@@ -24,7 +24,7 @@ Install the conductor into a project's skills directory and register its module 
    rm -rf "{project-root}/<skills-dir>/bmad-sdlc"
    cp -R "{module-root}/skills/bmad-sdlc" "{project-root}/<skills-dir>/bmad-sdlc"
    ```
-   The package already excludes authoring state (`.analysis/`, `.memlog.md`, caches).
+   The package already excludes authoring state (`.analysis/`, `.memlog.md`, caches, and `evals/`).
 
 4. **Copy the module metadata.** The installer rebuilds `_bmad/_config/` from per-module files, so place it where it expects:
    ```bash
@@ -38,7 +38,7 @@ Install the conductor into a project's skills directory and register its module 
    uv run --no-cache "{project-root}/<skills-dir>/bmad-sdlc/scripts/sdlc_plan.py" \
      detect --project-root "{project-root}"
    ```
-   Confirm `skills` includes `bmad-sdlc` and `model` is not `unknown`. If `model` is `unknown`, the project has no recognizable BMAD install; report that and stop before claiming success.
+   The detector deliberately excludes the conductor from the `skills` list, so `bmad-sdlc` will not appear there; confirm the skill directory exists and read `model`. If `model` is `unknown`, the project has no recognizable BMAD install: report that as **plan-only until BMAD is installed** and continue. A plan-only install is valid; only delivery actions stay blocked.
 
 6. **Initialize the plan (optional).** If the user wants the conductor usable immediately and no ledger exists:
    ```bash

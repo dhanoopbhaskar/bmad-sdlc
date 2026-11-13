@@ -17,7 +17,7 @@ BMAD is an **agentic agile delivery framework**: named personas own phases, and 
 | **Epic** | spec → stories → Build × stories → integrate → retrospective |
 | **Project** | shared contracts → epics repeated → integrated product |
 
-The critical detail: **there is no single "unit of work."** Each persona advances a different thing.
+The critical detail: **there is no single 'unit of work'.** Each persona advances a different thing.
 
 | Persona | Advances |
 |---|---|
@@ -39,7 +39,7 @@ The repository has **v6.12.4** installed (`bmad-help`, epics/stories, `sprint-st
 - **Hands off in fresh context** — seeds a subagent with the objective, inputs, settled decisions, expected output, and gate criteria; validates the artifact before accepting it.
 - **Gates every phase** — summary + `Approve / Revise / Run reviewer / Skip with override`. Overrides require a reason: the helper rejects an override that has none, and `validate` reports any that slipped through.
 - **Right-sizes the gates** — a trivial fix goes build → review → done; an audit starts at review; epic/project gets the full gate set. Gate levels are resolved from track, size, and model.
-- **Records per-ticket gates** — `ticket`, `tests`, `review`, and `done` live under `tickets`, while BMAD artifacts remain the status truth.
+- **Records per-ticket gates** — `ticket`, `tests`, `review`, and `done` live under `tickets.<id>.gates`, while BMAD artifacts remain the status truth.
 - **Treats BMAD artifacts as truth** — the ledger stores the SDLC overlay and pointers, not ticket statuses. The conductor re-reads `sprint-status.yaml` or `tickets.toml` on every activation.
 - **Covers four tracks** — greenfield, feature, fix, and audit.
 - **Degrades honestly** — a missing skill is reported and the action is blocked; it is never silently substituted or faked.
@@ -50,16 +50,7 @@ The repository has **v6.12.4** installed (`bmad-help`, epics/stories, `sprint-st
 
 The skill is already installed locally at `.agents/skills/bmad-sdlc/`.
 
-To install it into another project, load **`skills/bmad-sdlc-module/setup/SKILL.md`**. The setup skill:
-
-1. copies `skills/bmad-sdlc/` into the target project's skills directory (usually `.agents/skills/`);
-2. copies `module-help.csv` into `_bmad/bmad-sdlc/`;
-3. runs the detector to verify;
-4. optionally initializes the ledger.
-
-The skill's `customize.toml` is the only configuration surface; there is no separate module config file.
-
-It never edits `_bmad/_config/`; the BMAD installer owns those files. To make the help entry appear in `bmad-help`, re-run the installer so it assembles `_bmad/bmad-sdlc/module-help.csv` into the catalog.
+To install it into another project, load **`skills/bmad-sdlc-module/setup/SKILL.md`**. It is the only step list: it copies the skill, places the module metadata, runs the detector, and optionally initializes the ledger. `customize.toml` is the only configuration surface; there is no separate module config file. The setup skill never edits `_bmad/_config/`; re-run the BMAD installer to publish the help entry.
 
 ### Requirements
 
@@ -77,24 +68,17 @@ Invoke the skill:
 bmad-sdlc
 ```
 
-Then use the menu, or the stable verbs:
+Then use the menu, or the five verbs the examples use:
 
 ```text
-start                 create a workstream (name, track, size)
-continue / next       take the recommended action
-status                dashboard + full artifact paths
-phase plan            jump to a phase menu
-run plan.stories      run a specific action
-skip / override       skip a gate; a required or conditional gate needs a reason
-revise                return to the last action with new direction
-review                run bmad-review on the current artifact
-switch <workstream>   change the active workstream; the previous active one is paused
-resize <track> <size> change track or size; recomputes every level and phase gate
-pause / resume        change workstream status; state is persisted either way
-done                  mark the workstream done once every required/conditional gate is decided
-help                  show the menu and the current recommendation
-quit                  save and exit; the ledger is already written
+start
+continue / next
+status
+run <action id>
+done
 ```
+
+The full verb set, signatures, and ledger effects are in `menu.md` §Verbs.
 
 ### Examples
 
@@ -173,16 +157,28 @@ uv run --no-cache .agents/skills/bmad-sdlc/scripts/sdlc_plan.py summary \
 uv run --no-cache python -m unittest discover \
   -s .agents/skills/bmad-sdlc/scripts/tests -p 'test_*.py'
 
-# Run the evals (output outside the repo so the bare baseline stays bare)
+# Run the evals (output outside the repo so the bare baseline stays bare).
+# --mode takes one value; run each mode separately.
 XDG_DATA_HOME="$HOME/.local/share" XDG_CONFIG_HOME="$HOME/.config" \
   uv run .agents/skills/bmad-eval-runner/scripts/run_evals.py \
   --cases .agents/skills/bmad-sdlc/evals/cases.json \
   --skill-path .agents/skills/bmad-sdlc \
   --output-dir ~/bmad-evals/bmad-sdlc \
-  --mode baseline --mode quality
+  --mode quality
+
+XDG_DATA_HOME="$HOME/.local/share" XDG_CONFIG_HOME="$HOME/.config" \
+  uv run .agents/skills/bmad-eval-runner/scripts/run_evals.py \
+  --cases .agents/skills/bmad-sdlc/evals/cases.json \
+  --skill-path .agents/skills/bmad-sdlc \
+  --output-dir ~/bmad-evals/bmad-sdlc \
+  --mode baseline
 ```
 
-The detector reports **v6**, hub `bmad-help`, test style `bmad-testarch`. All 70 ledger tests pass. No installer-managed `_bmad/` files are modified.
+Read `evals/README.md` §Known limitations before quoting a result: quality mode
+does not grade, the bare baseline needs its own run, and trigger mode returns
+0.0 under opencode.
+
+The detector reports **v6**, hub `bmad-help`, test style `bmad-tea`. The ledger regression suite is the authoritative check (see `AGENTS.md` §Running and verifying). No installer-managed `_bmad/` files are modified.
 
 ---
 

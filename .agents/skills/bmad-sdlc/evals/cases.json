@@ -48,7 +48,7 @@
   },
   {
     "id": "missing-build",
-    "input": "Run headless. Use bmad-sdlc. Build the next ticket for the login fix. Workstream: login-fix. Track: fix. Size: trivial. Note: bmad-build is not installed in this environment. Work only in the project root; do not inspect parent directories.",
+    "input": "Run headless. Use bmad-sdlc. Build the next ticket for the login fix. Workstream: login-fix. Track: fix. Size: trivial. Work only in the project root; do not inspect parent directories.",
     "rubric": [
       "The response identifies bmad-build as missing or unavailable.",
       "The JSON status is blocked.",
@@ -103,7 +103,7 @@
   },
   {
     "id": "fix-one-session",
-    "input": "Run headless. Use bmad-sdlc. Fix the login bug where empty passwords are accepted. Workstream: login-fix. Track: fix. Note: bmad-build is not installed in this environment. Work only in the project root; do not inspect parent directories.",
+    "input": "Run headless. Use bmad-sdlc. Fix the login bug where empty passwords are accepted. Workstream: login-fix. Track: fix. Work only in the project root; do not inspect parent directories.",
     "rubric": [
       "The final JSON block reports track='fix' and size='one-session'.",
       "The JSON status is blocked.",
@@ -132,7 +132,7 @@
   },
   {
     "id": "feature-one-session",
-    "input": "Run headless. Use bmad-sdlc. Add SSO to the existing app. Workstream: sso. Track: feature. Size: one-session. Note: bmad-build is not installed in this environment. Work only in the project root; do not inspect parent directories.",
+    "input": "Run headless. Use bmad-sdlc. Add SSO to the existing app. Workstream: sso. Track: feature. Size: one-session. Work only in the project root; do not inspect parent directories.",
     "rubric": [
       "The final JSON block reports track='feature' and size='one-session'.",
       "The JSON status is blocked because bmad-build is missing.",
