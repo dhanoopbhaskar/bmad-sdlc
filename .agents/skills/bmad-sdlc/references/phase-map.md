@@ -2,7 +2,7 @@
 
 This is the reference for track, size, phase, action, and legal-now questions. Load it whenever the user picks a phase.
 
-Gate levels are resolved by `scripts/sdlc_plan.py` from track, size, and model; `summary` is authoritative. The tables below summarize the resolver. `resize` recomputes them after a size or track change. `greenfield` and `feature` share the same levels; only `fix` and `audit` narrow them.
+Gate levels are resolved by `scripts/sdlc_plan.py` from track, size, and model; `summary` is authoritative. `resize` recomputes them after a size or track change. `greenfield` and `feature` share the same levels; only `fix` and `audit` narrow them.
 
 ## Contents
 
@@ -41,11 +41,11 @@ BMAD's four right-sized paths. Size decides how many actions and gates apply, no
 | `epic` | One outcome needing several Build sessions. | Plan → stories → Build × stories → verify → retro. |
 | `project` | Several epics or roughly 20+ sessions, or multiple teams/systems. | Shared contracts (PRD, UX, architecture) → epics repeated → integrated product. |
 
-When two sizes both fit, choose the smaller and promote later. The user can resize at any gate.
+When two sizes both fit, choose the smaller and promote later. The user can resize at any gate. A `fix` or `audit` with no explicit size is `one-session`, even when a configured default size exists. The `audit` track ignores size: `verify.trace` stays required even at `trivial`.
 
 ## Role labels
 
-This table adds the persona name and the unit each role advances.
+This table names each persona and what the role owns.
 
 | Label | Persona | Owns |
 |---|---|---|
@@ -82,9 +82,8 @@ Notes:
 - `plan.ux` and `plan.architecture` are conditional. The conductor names the condition; the user can skip with an override.
 - In the current model, `plan.stories` and `plan.sprint` collapse into Sofia's ticket tree (`tickets.toml`). Do not ask for a separate sprint plan.
 - `plan.stories` for a `fix` may be a single ticket or a direct build intent; record that in the ledger note. A one-session fix treats it as optional and starts at `build.ticket`.
-- A `fix` or `audit` with no size defaults to `one-session`. A fix never inherits the epic planning set.
-- An audit has no build tickets. Its required code review is the `review` gate on the synthetic `audit` ticket; `verify.test_review`, `verify.nfr`, and `verify.trace` follow.
-- **Required before conditional.** `summary`'s `next_action` recommends a required gate before a conditional one. Conditional gates are not locked out: `optional_actions` exposes them, and the user may take UX, architecture, or test setup before stories. The per-track flows show a natural order, not a lock.
+- A fix never inherits the epic planning set.
+- **Required before conditional.** `summary`'s `next_action` recommends a required gate before a conditional one. Conditional gates are available early: `optional_actions` exposes them, and the user may take UX, architecture, or test setup before stories. The per-track flows show a natural order, not a lock.
 
 ## Solution phase
 
@@ -129,7 +128,7 @@ Ready-ticket sources:
 | `verify.nfr` | test-architect | `bmad-testarch-nfr` | `bmad-tea` | `verify.nfr` |
 | `verify.trace` | test-architect | `bmad-testarch-trace` | `bmad-tea` | `verify.trace` |
 
-`verify.trace` is the quality gate that matters most for the workstream. It produces coverage and a gate decision; a failing gate blocks close unless overridden.
+`verify.trace` is the quality gate that matters most for the workstream. The action produces coverage and a gate decision; a failing gate blocks close unless overridden.
 
 ## Close phase
 
@@ -144,7 +143,7 @@ If the workstream has more epics, close the epic and return to `plan.stories` fo
 
 ## Advisory actions
 
-Offer these at the moment they add value; never force them.
+Offer these at the moment they add value; never force them. Only offer them when `{workflow.include_advisory_skills}` is true.
 
 | Action id | Skill | When |
 |---|---|---|
@@ -156,7 +155,7 @@ Offer these at the moment they add value; never force them.
 
 ## Per-track flows
 
-Each arrow is an action id. Bracketed actions are conditional or optional; `|` separates alternatives; `× <unit>` repeats the action per unit; a parenthetical narrows or names an alternative.
+Each element in these flows is an action id. Bracketed actions are conditional or optional; `|` separates alternatives; `× <unit>` repeats the action per unit; a parenthetical narrows or names an alternative.
 
 ### Greenfield
 
@@ -183,8 +182,6 @@ frame.spec (or plan.prd update) → [plan.architecture delta] → plan.stories (
 [frame.spec (bug intent)] → [plan.stories: one ticket or direct build intent] → [build.atdd] → build.ticket
 → [build.tests] → build.review → build.done → [verify.e2e] → [verify.trace]
 ```
-
-Size `trivial` skips straight to `build.ticket` → `build.review` → `build.done`; verification gates are optional.
 
 ### Audit
 

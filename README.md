@@ -6,38 +6,13 @@ Instead of choosing among `bmad-prd`, `bmad-architecture`, `bmad-create-epics-an
 
 ---
 
-## What BMAD is
-
-BMAD is an **agentic agile delivery framework**: named personas own phases, and each phase leaves artifacts the next phase consumes. The core loop is **Clarify → Plan → Build and verify → Learn and adjust**, right-sized into four paths:
-
-| Path | Shape |
-|---|---|
-| **Trivial** | change → edit → verify |
-| **One-session** | intent → Build → result |
-| **Epic** | spec → stories → Build × stories → integrate → retrospective |
-| **Project** | shared contracts → epics repeated → integrated product |
-
-The critical detail: **there is no single 'unit of work'.** Each persona advances a different thing.
-
-| Persona | Advances |
-|---|---|
-| Analyst / PM / UX / Architect | documents (brief, PRD, UX, architecture) |
-| Product Owner | the ticket tree — initiative → epics → tickets |
-| Developer | one ticket per Build session |
-| Test Architect | test artifacts per ticket/epic |
-| Retrospective | one epic |
-
-The repository has **v6.12.4** installed (`bmad-help`, epics/stories, `sprint-status.yaml`), while the current BMAD docs describe a newer model (`bmad` hub, Sofia `bmad-agent-po`, `tickets.toml`). `bmad-sdlc` detects which one is present and routes accordingly.
-
----
-
 ## What `bmad-sdlc` does
 
 - **Detects the installed model** — v6 (epics + `sprint-status.yaml`) or current (Sofia + `tickets.toml`).
 - **Keeps a durable plan** — a committed ledger at `_bmad-output/sdlc/plan.yaml` plus an append-only `.memlog.md`.
 - **Presents a two-level menu** — phase first (Plan / Solution / Build / Verify / Close), then the legal actions for that phase, each with its role, skill, and gate.
 - **Hands off in fresh context** — seeds a subagent with the objective, inputs, settled decisions, expected output, and gate criteria; validates the artifact before accepting it.
-- **Gates every phase** — summary + `Approve / Revise / Run reviewer / Skip with override`. Overrides require a reason: the helper rejects an override that has none, and `validate` reports any that slipped through.
+- **Gates every phase** — summary + `Approve / Revise / Run reviewer / Skip with override`. Overrides require a reason: the helper rejects an override that has none, and `validate` fails on any that slipped through.
 - **Right-sizes the gates** — a trivial fix goes build → review → done; an audit starts at review; epic/project gets the full gate set. Gate levels are resolved from track, size, and model.
 - **Records per-ticket gates** — `ticket`, `tests`, `review`, and `done` live under `tickets.<id>.gates`, while BMAD artifacts remain the status truth.
 - **Treats BMAD artifacts as truth** — the ledger stores the SDLC overlay and pointers, not ticket statuses. The conductor re-reads `sprint-status.yaml` or `tickets.toml` on every activation.
@@ -46,11 +21,19 @@ The repository has **v6.12.4** installed (`bmad-help`, epics/stories, `sprint-st
 
 ---
 
+## What BMAD is
+
+BMAD is an **agentic agile delivery framework**: named personas own phases, each persona advances a different unit of work, and each phase leaves artifacts the next phase consumes. The core loop is **Clarify → Plan → Build and verify → Learn and adjust**, right-sized into trivial, one-session, epic, and project. `docs/bmad-sdlc.md` §5–§6 has the path and persona tables.
+
+The repository has **v6.12.4** installed (`bmad-help`, epics/stories, `sprint-status.yaml`), while the current BMAD docs describe a newer model (`bmad` hub, Sofia `bmad-agent-po`, `tickets.toml`). `bmad-sdlc` detects which one is present and routes accordingly.
+
+---
+
 ## Install
 
 The skill is already installed locally at `.agents/skills/bmad-sdlc/`.
 
-To install it into another project, load **`skills/bmad-sdlc-module/setup/SKILL.md`**. It is the only step list: it copies the skill, places the module metadata, runs the detector, and optionally initializes the ledger. `customize.toml` is the only configuration surface; there is no separate module config file. The setup skill never edits `_bmad/_config/`; re-run the BMAD installer to publish the help entry.
+To install it into another project, load **`skills/bmad-sdlc-module/setup/SKILL.md`**. It is the only step list: it copies the skill, places the module metadata, runs the detector, and optionally initializes the ledger. The shipped `customize.toml` is the base configuration; overrides go in `_bmad/custom/bmad-sdlc.toml` (team) or `.user.toml` (personal). There is no separate module config file. The setup skill never edits `_bmad/_config/`; re-run the BMAD installer to publish the help entry.
 
 ### Requirements
 
@@ -78,7 +61,7 @@ run <action id>
 done
 ```
 
-The full verb set, signatures, and ledger effects are in `menu.md` §Verbs.
+The full verb set, argument syntax, and ledger effects are in `menu.md` §Verbs.
 
 ### Examples
 
@@ -102,7 +85,7 @@ Two layers, both committed: the plan and its audit trail.
 
 The design document and decision log live in [`docs/bmad-sdlc.md`](docs/bmad-sdlc.md).
 
-A fresh session reads the ledger, re-runs detection, reconciles the BMAD artifacts, and resumes at the recommended action. No re-interviewing. The ledger is already initialized for this repo (`ws-001`, track `feature`, size `epic`), with the bootstrap decision recorded.
+A fresh session reads the ledger, re-runs detection, reconciles the BMAD artifacts, and resumes at the recommended action. No re-interviewing. This repo's live workstream and current position are reported by `summary`, not copied here, so the README cannot go stale.
 
 ---
 
@@ -141,61 +124,13 @@ _bmad-output/sdlc/               # runtime ledger + audit trail
 
 ## Verify
 
-```bash
-# Detect the installed model and skills
-uv run --no-cache .agents/skills/bmad-sdlc/scripts/sdlc_plan.py detect --project-root .
-
-# Validate the ledger
-uv run --no-cache .agents/skills/bmad-sdlc/scripts/sdlc_plan.py validate \
-  --plan _bmad-output/sdlc/plan.yaml
-
-# Summarize the current position
-uv run --no-cache .agents/skills/bmad-sdlc/scripts/sdlc_plan.py summary \
-  --plan _bmad-output/sdlc/plan.yaml
-
-# Run the ledger helper tests
-uv run --no-cache python -m unittest discover \
-  -s .agents/skills/bmad-sdlc/scripts/tests -p 'test_*.py'
-
-# Run the evals (output outside the repo so the bare baseline stays bare).
-# --mode takes one value; run each mode separately.
-XDG_DATA_HOME="$HOME/.local/share" XDG_CONFIG_HOME="$HOME/.config" \
-  uv run .agents/skills/bmad-eval-runner/scripts/run_evals.py \
-  --cases .agents/skills/bmad-sdlc/evals/cases.json \
-  --skill-path .agents/skills/bmad-sdlc \
-  --output-dir ~/bmad-evals/bmad-sdlc \
-  --mode quality
-
-XDG_DATA_HOME="$HOME/.local/share" XDG_CONFIG_HOME="$HOME/.config" \
-  uv run .agents/skills/bmad-eval-runner/scripts/run_evals.py \
-  --cases .agents/skills/bmad-sdlc/evals/cases.json \
-  --skill-path .agents/skills/bmad-sdlc \
-  --output-dir ~/bmad-evals/bmad-sdlc \
-  --mode baseline
-```
-
-Read `evals/README.md` §Known limitations before quoting a result: quality mode
-does not grade, the bare baseline needs its own run, and trigger mode returns
-0.0 under opencode.
-
-The detector reports **v6**, hub `bmad-help`, test style `bmad-tea`. The ledger regression suite is the authoritative check (see `AGENTS.md` §Running and verifying). No installer-managed `_bmad/` files are modified.
+The ledger regression suite and the exact commands are in `AGENTS.md` §Running and verifying; the eval commands and their limitations are in `evals/README.md`. No installer-managed `_bmad/` files are modified. Run `detect` to read the current model, hub, and test style rather than relying on a recorded example.
 
 ---
 
 ## Key design decisions
 
-| Decision | Choice |
-|---|---|
-| Operating model | Hybrid conductor: advances work, pauses at human gates, hands off to skills |
-| State model | Thin ledger + artifacts; BMAD artifacts are truth |
-| Gate policy | Enforce required gates, allow logged overrides |
-| Role presentation | Neutral conductor + role labels |
-| Interaction | Menu-driven, two levels (phase → action) |
-| Handoff | Fresh subagent per skill, with inline and user-run fallbacks |
-| Ledger granularity | Per product, multi-workstream |
-| Version target | Adaptive: v6 and current |
-| End of flow | Retro per epic, then continue |
-| Packaging | Local skill now + reusable module |
+See `docs/bmad-sdlc.md` §4 for the binding decision log. Two choices shape the repository: the flow ends per epic (retro, then the next epic), and packaging ships both the local skill and the reusable module.
 
 ---
 

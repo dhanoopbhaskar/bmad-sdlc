@@ -2,6 +2,16 @@
 
 BMAD is moving from the v6 flow (`bmad-help`, epics/stories, `sprint-status.yaml`) to the current flow (`bmad` hub, Sofia the Product Owner, `tickets.toml`). The conductor must work on both without pretending a missing skill exists.
 
+## Contents
+
+- [Detection](#detection)
+- [Skill mapping](#skill-mapping)
+- [Alias resolution](#alias-resolution)
+- [Missing-skill behavior](#missing-skill-behavior)
+- [Current-model notes](#current-model-notes)
+- [v6 notes](#v6-notes)
+- [Version change mid-workstream](#version-change-mid-workstream)
+
 ## Detection
 
 Run:
@@ -14,12 +24,13 @@ The output includes:
 
 - `model`: `v6`, `current`, or `unknown`
 - `hub`: `bmad`, `bmad-help`, or null
-- `test_style`: `bmad-tea`, `bmad-testarch`, or `unknown`
+- `test_style`: `bmad-tea`, `bmad-testarch`, or `unknown`. It matches an exact `bmad-tea` directory; a fabricated `bmad-tea-<capability>` name is not an install.
 - `skills`: every installed BMAD skill directory except the conductor itself (`bmad-sdlc`)
 - `missing_core`: required skills that are absent
 - `paths`: resolved output/planning/implementation/test folders
+- `config_errors`: malformed `{project-root}/_bmad/config*.toml` files; `init` refuses to record paths while any is present
 
-Detection is **project-local**: `detect` scans `{project-root}` and `{project-root}/_bmad/_config/skill-manifest.csv`. Skills visible in the session but not installed under the project are not project installations; do not treat any of them as an installation.
+Detection is **project-local**: `detect` scans the skill directories in `sdlc_plan.py` (`SKILL_DIRS`: `.agents`, `.claude`, `.cline`, `.bob`, `.agent`, `.adal`) and `{project-root}/_bmad/_config/skill-manifest.csv`. Skills visible in the session but not installed under the project are not project installations; do not treat any of them as an installation.
 
 Detection order:
 
@@ -28,40 +39,23 @@ Detection order:
 3. BMAD skills present but neither signal → **unknown**; ask the user (or, in headless mode, record `unknown` and block skill-dependent actions).
 4. No BMAD skills under the project root → **unknown**; the conductor can still plan, but every skill-dependent action is `blocked` until BMAD is installed.
 
-Tell the user the detected model once, plainly. Do not make them choose unless detection is `unknown`. Never write a model the detector did not confirm unless the user explicitly answers the question. On first creation pass `--model` to `init`; on an existing ledger record the answer with `set --path bmad.model`. Never claim a skill is available because it appears elsewhere in the session.
+Tell the user the detected model once, plainly. Do not make them choose unless detection is `unknown`. Write a model only when the detector confirmed it or the user answered the question explicitly. Never claim a skill is available because it appears elsewhere in the session.
 
 ## Skill mapping
+
+Per-action resolution — PRD, UX, architecture, stories, sprint, tests, build, review, walkthrough, retrospective, and mid-flight change — is in the `v6` and `Current` columns of `phase-map.md`; the `Current` skill is also the alias when the model's skill is absent. Only these capabilities have no per-action row:
 
 | Capability | v6 | Current |
 |---|---|---|
 | Hub | `bmad-help` | `bmad` |
 | Analyst documents | `bmad-product-brief`, `bmad-prfaq`, `bmad-agent-analyst` | `bmad-agent-analyst` |
-| PRD | `bmad-prd`, `bmad-agent-pm` | `bmad-agent-pm` |
-| Other planning docs | `bmad-prd` variants | `bmad-agent-pm`, `bmad-facilitate` |
-| UX | `bmad-ux` | `bmad-ux` |
-| Architecture | `bmad-architecture` | `bmad-architecture` |
-| Ticket tree | `bmad-create-epics-and-stories` + `bmad-sprint-planning` | `bmad-agent-po` |
-| Build | `bmad-build` | `bmad-build` |
-| Unattended build | `bmad-build-auto` | `bmad-build-auto` |
-| Code review | `bmad-code-review` | `bmad-code-review` |
-| Walkthrough | `bmad-walkthrough` | `bmad-walkthrough` |
-| QA e2e | `bmad-qa-generate-e2e-tests` | `bmad-qa-generate-e2e-tests` |
-| Retrospective | `bmad-retrospective` | `bmad-retrospective` |
-| Test architecture | `bmad-testarch-*` | `bmad-tea` (one agent covers every capability) |
-| Mid-flight change | `bmad-correct-course` | `bmad-agent-po` (replan) |
 
 ## Alias resolution
 
 For every action, resolve the skill in this order:
 
-1. The model-specific skill from the table.
-2. A known alias in the same family:
-   - `bmad-spec` ↔ `bmad-agent-po`
-   - `bmad-prd` ↔ `bmad-agent-pm`
-   - `bmad-create-epics-and-stories` ↔ `bmad-agent-po`
-   - `bmad-sprint-planning` ↔ `bmad-agent-po`
-   - `bmad-testarch-*` ↔ `bmad-tea` (never invent `bmad-tea-<capability>`)
-   - `bmad-product-brief` / `bmad-prfaq` ↔ `bmad-agent-analyst`
+1. The model-specific skill from `phase-map.md` or the table above.
+2. The `Current` skill in the same row; `bmad-testarch-*` capabilities resolve to `bmad-tea`.
 3. A direct equivalent the user names.
 4. Otherwise, **blocked**: say which capability is missing, why it matters, and how to install it.
 
@@ -71,11 +65,11 @@ Never call a skill that is not installed. Never claim an artifact was produced b
 
 | Situation | Behavior |
 |---|---|
-| Core skill missing (e.g., no `bmad-build`) | Mark the action blocked in the report. Say: "`bmad-build` is not installed under this project. Re-run the BMAD installer for this project, then return." Do not invent an installer command. Record the missing skill in the phase note; do not mark the phase `blocked` (that replaces the action with `<phase>.unblock`). |
+| Core skill missing (e.g., no `bmad-build`) | Set `status` to `blocked` in the emitted block. Say: "`bmad-build` is not installed under this project. Re-run the BMAD installer for this project, then return." Do not invent an installer command. Record the reason with `set --workstream <id> --path phases.<phase>.note --value "missing: bmad-build"`; do not mark the phase `blocked` (that replaces the action with `<phase>.unblock`). |
 | Audit review skill missing | If neither `bmad-code-review` nor `bmad-build`'s built-in review is available, block `build.review` and name the install step. |
 | Test skills missing | `solution` and `verify` gates become `blocked` unless the user accepts a manual substitute (e.g., run the project's own test suite) and records an override. |
 | Hub missing but focused skills present | Use the conductor's own menu; do not require `bmad-help`. |
-| Model `unknown` | Ask one question: "Which BMAD flow is installed — v6 (epics + sprint-status) or current (Sofia + tickets.toml)?" Record the answer with `init --model` on first creation, or `set --path bmad.model` on an existing ledger. In headless mode, record `unknown` and block skill-dependent actions. |
+| Model `unknown` | Ask one question: "Which BMAD flow is installed — v6 (epics + sprint-status) or current (Sofia + tickets.toml)?" Record the answer with `init --model` on first creation, or `set --path bmad.model` on an existing ledger; that `set` needs `--reason` to downgrade a confirmed model or to reopen a phase. In headless mode, record `unknown` and block skill-dependent actions. |
 | No BMAD at all | Offer to stop so the user can install BMAD, or run in "plan-only" mode with every gate marked `blocked`. Never fake progress. |
 
 ## Current-model notes

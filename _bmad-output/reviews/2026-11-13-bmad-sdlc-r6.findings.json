@@ -1,0 +1,646 @@
+[
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3033-3041, 515-533, 238-264",
+    "trigger_condition": "A `set --path bmad --replace` payload can record `memlog` equal to the ledger path: the bmad branch only checks that the key is present, and `resolve_memlog`'s recorded branch never compares it to the ledger.",
+    "guard_snippet": "Resolve the incoming memlog the way `resolve_memlog` does and fail when it equals the ledger; add the same comparison to `resolve_memlog`'s recorded branch; make `file_lock` refuse a path already locked in-process.",
+    "potential_consequence": "Verified: the command hangs forever on the ledger's own `.lock` after saving, and every later write command hangs too, so the ledger is bricked until a human edits YAML. `validate` and `summary` still report ok."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2994-3005, 3256-3299, 3303-3308",
+    "trigger_condition": "The only lifecycle check on writes is `status == 'done'`; `set`, `append`, and `ticket` all accept phase, gate, ticket, and evidence writes on a paused workstream (with an explicit `--workstream`).",
+    "guard_snippet": "Reject writes when the workstream status is `paused` unless the path is `status` or `active_workstream`, using cmd_done's wording: \"workstream is paused; resume it before ...\".",
+    "potential_consequence": "Verified: a paused workstream accepts `gates.plan.ux.status=skipped --reason demo`, yet `summary` keeps returning `next_action: null`, so decisions land where the conductor is told nothing can advance."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3191-3198, 1640-1648, 536-574",
+    "trigger_condition": "`set --path bmad.model` and `init --model` on an existing ledger both call `apply_levels`, which flips a `done`/`skipped` phase back to `pending` when the new model makes a gate required; unlike `resize`, neither path needs or logs a reason.",
+    "guard_snippet": "Collect the `phases.<p>.status->pending` entries from `apply_levels` in the model-change branches, fail without `--reason`, and log each reopened phase; share the helper with `cmd_resize`.",
+    "potential_consequence": "A signed-off phase silently regresses to pending while the audit trail records only \"BMAD model set to ...\", so a later reader cannot tell which phase changed or why (gate-matrix §Reopening requires the reason)."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2567-2570, 3191-3195, compare 1574-1583",
+    "trigger_condition": "`set --path bmad.model unknown` — the route SKILL.md:56 recommends for an existing ledger — performs the downgrade that `init --model unknown` refuses, with no reason and no `--force`.",
+    "guard_snippet": "In the bmad.model branch, refuse `unknown` while the stored model is v6/current unless `--force --reason` is supplied, reusing init's message.",
+    "potential_consequence": "One `set` drops `plan.sprint` from required to optional on an epic v6 ledger and removes a required gate from the matrix with no recorded reason."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2951-2991, compare 2693-2700",
+    "trigger_condition": "`set --path tickets.<id> --delete` returns before `_guard_ticket_node` runs, so a ticket whose `ticket`/`review`/`done` gates are `passed` is deleted with only `--reason`, while replacing it is refused for dropping decided gates.",
+    "guard_snippet": "Before deleting, refuse a ticket with a `passed`/`overridden`/`skipped` gate and point at the reopen path, or record the deleted gate states verbatim in the audit trail.",
+    "potential_consequence": "Verified: a passed build/review/done trail is erased by one command and `validate` then reports a clean ledger."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3730-3751",
+    "trigger_condition": "`migrate` recreates a missing gate as `open` and never re-checks the enclosing phase, so a phase already marked `done` stays `done` while the gate it just gained is undecided.",
+    "guard_snippet": "After creating gate nodes, reopen the affected phase or fail with the exact repair, and never save a ledger the same command cannot make valid.",
+    "potential_consequence": "A ledger that `validate` rejects before migrate is rejected identically after it, while migrate reports ok and logs a `correction`, so the documented repair path repeats forever."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3543-3573",
+    "trigger_condition": "Phase evidence is a flat path list with no gate id, and one entry short-circuits the per-gate artifact lookup for every required/conditional gate in that phase; `done` accepts a directory because it only tests `exists()` and `st_size`.",
+    "guard_snippet": "Record phase evidence as `{gate, path}`, require `is_file()` and a matching gate id, and remove the `or phase_evidence` short-circuit so each gate still needs its own artifact key.",
+    "potential_consequence": "Verified from code: `append --path phases.plan.evidence --value .` plus the same for verify lets a workstream close with no SPEC, PRD, stories, ticket artifact, or trace — the \"advance on file presence alone\" failure gate-matrix:7 forbids."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3555-3569, 4016-4026",
+    "trigger_condition": "`done` decides `plan.ux` by globbing `planning_artifacts` for DESIGN.md and EXPERIENCE.md and continues before consulting `artifacts.ux`, so the ledger's own UX pointer is ignored; `reconcile` mirrors the rule.",
+    "guard_snippet": "Resolve both UX documents from the recorded pointer (add `ux_experience` or accept a directory pointer) and fall back to the planning-artifacts glob only when no pointer exists.",
+    "potential_consequence": "A ledger pointing `artifacts.ux` at a real DESIGN.md + EXPERIENCE.md pair elsewhere cannot close until the files are duplicated into the planning-artifacts tree."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4125-4133, 4210-4222",
+    "trigger_condition": "An omitted `evidence` key yields `raw_evidence is None`, `evidence: []`, and the evidence requirement is skipped; only an explicitly empty list is rejected.",
+    "guard_snippet": "Require the key for a done return (`if 'evidence' not in returned: reasons.append('no evidence returned')`) rather than only checking a present-and-empty list.",
+    "potential_consequence": "Verified: `{\"status\":\"done\",\"artifacts\":[\"out.md\"]}` returned `ok: true` with no evidence, so handoff-protocol §Return contract's \"evidenced, not merely asserted\" rule is satisfiable by omission."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4134, 4200-4208",
+    "trigger_condition": "`--allow-empty-artifacts` waives the artifact requirement for any action; nothing resolves the action id or enforces the \"action that produces no file\" exception the docs describe.",
+    "guard_snippet": "Resolve the current action from the ledger and enforce an allowlist inside `cmd_verify_return`, failing when the flag is used for any other action.",
+    "potential_consequence": "A done return with `artifacts: []` is accepted for every capability in the lifecycle, turning the return check into a status echo."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:888-899, 4412-4425, SKILL.md:29",
+    "trigger_condition": "`summary` has no `--project-root` and `resolve_skill` returns the model alias whether or not that skill directory exists, so the command that produces `next_action.skill` cannot know what `detect` found installed.",
+    "guard_snippet": "Give `summary` a project root (or persist `detected_skills` at init), call `read_skills`, and emit `next_action.skill_installed: false` with a blocked reason when the resolved skill is absent.",
+    "potential_consequence": "The headless rule \"missing next_action.skill -> blocked\" is unenforceable by the script; only a prompt-level cross-check against `detect.missing_core` prevents a handoff to an absent skill."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2467-2469, 2591-2609, 1766-1769",
+    "trigger_condition": "`_validate_path` allows the single-segment workstream fields `name` and `started`, but `_validate_value` has no branch for either and `validate` type-checks neither.",
+    "guard_snippet": "Require a non-empty string for `name` and an ISO-8601 shape for `started` in `_validate_value`, and assert both in `validate`.",
+    "potential_consequence": "Verified: `set --path name --value '[1,2]'` returned ok and `validate` returned no errors, so menus and `workstreams_detail` receive a list where a display name belongs."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2588-2590, compare 3500-3521",
+    "trigger_condition": "An artifact pointer accepts any string at write time, including an absolute path outside `{project-root}`; the containment check exists only later in `done` and `reconcile`.",
+    "guard_snippet": "In the artifacts branch of `_validate_value`, resolve against the command's project root and fail when the path leaves it, reusing done's message.",
+    "potential_consequence": "Verified: `set --path artifacts.spec --value /etc/hosts` returned ok, so a gate can be decided against a pointer the project cannot ship and the failure appears only at close."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:344-348",
+    "trigger_condition": "`_load_toml` swallows `TOMLDecodeError` and returns `{}`, so a malformed `_bmad/config.toml` is indistinguishable from an absent one and `resolve_paths` silently falls back to default folders.",
+    "guard_snippet": "Return `(data, error)` and surface `config_error` in `detect` and `init` instead of treating a parse failure as no configuration.",
+    "potential_consequence": "A broken config silently records default artifact folders, and every later evidence check scans the wrong directory while the real artifacts sit elsewhere."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3978-3990, 4030-4055",
+    "trigger_condition": "`reconcile --write` applies orphan pointers only; `gates_to_block` and `phases_to_block` are computed and reported but never written, and no other command sets a gate to `blocked`.",
+    "guard_snippet": "Under `--write`, set every gate in `gates_to_block` (and phase in `phases_to_block`) to `blocked` in the same save, log one correction per change, and report the applied list.",
+    "potential_consequence": "`blocked_gates` stays empty and the dashboard never marks a gate blocked, contradicting \"a gate whose evidence pointer is missing is blocked, not open\"; the conductor must hand-apply a list reconcile already computed."
+  },
+  {
+    "lens": "adversarial",
+    "location": "SKILL.md:31, behavior at scripts/sdlc_plan.py:2093-2117",
+    "trigger_condition": "The headless contract says `track` and `size` come from `summary.workstream`, but after `done` clears `active_workstream` the script returns `\"workstream\": null` and keeps the last track/size only at the top level.",
+    "guard_snippet": "Emit a workstream object with `status: done` in summary's no-active branch, or change SKILL.md to read `summary.track`/`summary.size` with `summary.workstream` as the override when present.",
+    "potential_consequence": "A literal reading of the contract emits `track: null, size: null` for exactly the closed state the script preserves at the top level."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3116-3128, 2610-2624",
+    "trigger_condition": "`set --path gates.<phase>.<gate> --replace` writes a gate node without a `level`; `_validate_value` rejects `level` in the payload and the write path does not carry the previous value forward.",
+    "guard_snippet": "For a phase gate node replacement, copy the existing `level` into the new node before saving, as the phase-node branch already does for `gate`.",
+    "potential_consequence": "`validate` warns \"level missing; run migrate\" after a documented node write, and the gate's required/conditional status is lost until migrate runs."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3303-3335, 3420-3435",
+    "trigger_condition": "`ticket` adds or changes gates below a `done`/`skipped` build phase; it checks only the workstream status.",
+    "guard_snippet": "Refuse ticket gate writes while `phases.build.status` is `done` or `skipped` until the phase is reopened.",
+    "potential_consequence": "The script writes a ledger its own `validate` call rejects for a done build phase with undecided gates."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2951-2973, 3455-3462",
+    "trigger_condition": "`--delete` removes the only ticket of a `done` build phase; only the workstream status is checked.",
+    "guard_snippet": "Refuse deleting the last ticket while `phases.build.status` is `done` or `skipped`, and name the phase reopen command.",
+    "potential_consequence": "`validate` then reports a done build with no ticket built, and `done` refuses to close the workstream."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2678-2682, 3036-3050",
+    "trigger_condition": "`set --path tickets.<new-id> --replace` creates a ticket node without running the ticket order guards, so `done` can be `passed` while `review` is open.",
+    "guard_snippet": "Refuse creating a ticket through `set`; require the `ticket` command for a new id, or run the same order guards on the whole node.",
+    "potential_consequence": "The create path bypasses the guard the replace path enforces, and `validate` then fails on the ledger it just accepted."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3256-3283, 3045-3052",
+    "trigger_condition": "`append` has no done-workstream guard, so phase evidence or a decision can be appended to a closed workstream.",
+    "guard_snippet": "Refuse `append` when the workstream status is `done` unless the command is the close event itself.",
+    "potential_consequence": "A closed workstream continues to accept evidence writes, changing the record after `done` declared it closed."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3262-3268, 2236-2250",
+    "trigger_condition": "`append --path artifacts.<key>` on a missing key creates a list, turning an artifact pointer into a list.",
+    "guard_snippet": "Refuse `append` for any path under `artifacts`; artifact pointers take `set`.",
+    "potential_consequence": "`validate` accepts a ledger whose artifact pointer is a list, and `done` stringifies the list into a bogus path."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3500-3523",
+    "trigger_condition": "`done` checks an artifact with `exists()` and `st_size`, so a non-empty directory passes as evidence; `verify-return` correctly uses `is_file()`.",
+    "guard_snippet": "Use `is_file()` for artifact and phase-evidence checks in `done` and `reconcile`.",
+    "potential_consequence": "A directory standing in for a required artifact lets the workstream close with no actual document."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3650-3661",
+    "trigger_condition": "The close note lists only gates with status `overridden`; a required or conditional gate recorded as `skipped` with a reason is also an override but is omitted.",
+    "guard_snippet": "Include `skipped` required/conditional gates in the close-note override list (or label them separately).",
+    "potential_consequence": "gate-matrix §Override rules says a required-gate override must be visible in the close summary, but a reasoned skip disappears from it."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4286-4300",
+    "trigger_condition": "`resize` from audit to another track treats only `passed`/`overridden` audit gates as decided, so a reasoned `skipped` review is erased when the synthetic ticket is removed.",
+    "guard_snippet": "Count `skipped` as decided in that check, matching `_guard_reopen`.",
+    "potential_consequence": "A recorded skip decision disappears from the ledger on a track change."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3116-3128, 2731-2737",
+    "trigger_condition": "A whole-node gate replacement that keeps a decided status but omits `override_reason` clears the reason; `_guard_decided_metadata` only guards explicit `override_reason`/`decided_at` paths.",
+    "guard_snippet": "Carry the previous `override_reason` and `decided_at` into a node replacement unless the gate is reopened.",
+    "potential_consequence": "A documented node write erases the override history the close summary and status view depend on."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3908-3920, 289-310",
+    "trigger_condition": "Activation runs `reconcile` without `--write` (SKILL.md:73-78), but `plan_locked` always creates `<ledger>.lock`, so a read-only checkout still attempts a write.",
+    "guard_snippet": "Skip the lock (or use a shared lock) for reconcile when `--write` is not set, or document the lock as a required side effect.",
+    "potential_consequence": "Activation fails on a read-only checkout or leaves a `.lock` file the scope guardrail did not expect."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4454-4455",
+    "trigger_condition": "`--gate` and `--status` use argparse `choices`, so an invalid value exits 2 with usage text instead of the JSON `{ok:false,error}` contract every other failure follows.",
+    "guard_snippet": "Replace `choices=` with a type handler that calls `fail()`, or catch the argparse error and emit JSON.",
+    "potential_consequence": "A conductor parsing stdout as JSON breaks on a typo instead of reading a structured error."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/references/ledger-schema.md:290",
+    "trigger_condition": "The resume instruction says to set a passed gate from `gates_to_block` to `blocked` without `--reason`; `_guard_reopen` requires a reason for any decided gate moving to `blocked`.",
+    "guard_snippet": "Add `--reason <why>` to the documented command and to the phase equivalent.",
+    "potential_consequence": "Following the documented recovery step is rejected by the script, so a fresh session cannot repair the ledger as instructed."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/references/menu.md:97",
+    "trigger_condition": "The status view tells the conductor to \"resolve the blocker or override with a reason\" for `<phase>.unblock`, but a blocked phase is not a gate and no command leaves that state.",
+    "guard_snippet": "Name the clearing command: `set --workstream <id> --path phases.<phase>.status --value active`.",
+    "potential_consequence": "There is no documented way to leave the blocked-phase state, so the action recurs on every activation."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:915-919",
+    "trigger_condition": "The `size == \"project\"` action mapping (`plan.requirements -> plan.prd/bmad-prd`) is never produced by any test; every test workstream is feature/epic, fix, or audit.",
+    "guard_snippet": "Init `--track greenfield --size project --model v6`, assert `summary.next_action.action == plan.prd` and `skill == bmad-prd`; repeat for `current` and assert the current alias.",
+    "potential_consequence": "A project-sized engagement can be routed to the wrong action or a nonexistent skill with the suite still green; the start-greenfield eval accepts either action, so it cannot catch it.",
+    "gap_shape": "regression-gap",
+    "consumer": "The headless `next_action` for a project-size workstream",
+    "evidence": "Coverage run shows sdlc_plan.py:917 unexecuted; no test creates a greenfield/project workstream."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:601-620",
+    "trigger_condition": "The sprint-status.yaml half of `artifact_ticket_ids` is never executed; every overlay test uses tickets.toml.",
+    "guard_snippet": "Write sprint-status.yaml with `development_status` and no tickets.toml, run `reconcile` and `done`, and assert no drift and a successful close.",
+    "potential_consequence": "On a v6 project whose only ticket source is sprint-status.yaml, a broken parser makes `done` refuse every ticket as absent from artifacts; no test observes it.",
+    "gap_shape": "regression-gap",
+    "consumer": "done overlay check and reconcile drift report",
+    "evidence": "Coverage: lines 603-619 unexecuted; the only sprint-status test calls `detect`, not `artifact_ticket_ids`."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4164-4180",
+    "trigger_condition": "`verify-return` evidence validation (missing file, zero-byte file, outside-root path) is never exercised; tests pass a present file or an explicit empty list.",
+    "guard_snippet": "Add returns with `missing.log`, `../outside.log`, and a zero-byte file, asserting the corresponding reasons.",
+    "potential_consequence": "A return citing evidence it never produced still passes; the only machine gate before advancing is unverified.",
+    "gap_shape": "regression-gap",
+    "consumer": "SKILL.md loop step 4",
+    "evidence": "Coverage: 4169-4180 and 4226-4228 unexecuted."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3570-3573",
+    "trigger_condition": "The `{gate_id} (no artifact)` branch — a decided required/conditional gate with no pointer and no phase evidence — is never reached.",
+    "guard_snippet": "Pass a conditional plan gate with no artifact pointer and no phase evidence, then assert `done` refuses with `plan.requirements (no artifact)`.",
+    "potential_consequence": "Deleting the branch leaves the suite green, and a workstream closes with a decided gate that has no evidence behind it at all.",
+    "gap_shape": "regression-gap",
+    "consumer": "done close gate",
+    "evidence": "Coverage: line 3573 unexecuted; the nearest test sets a missing pointer, hitting the pointer loop instead."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4016-4026",
+    "trigger_condition": "`reconcile`'s `plan.ux` pair rule is never executed; only done's copy is tested.",
+    "guard_snippet": "Stage only DESIGN.md, pass `gates.plan.ux`, run `reconcile`, and assert `plan.ux` is in `gates_to_block`.",
+    "potential_consequence": "On resume, reconcile stops reporting an incomplete UX artifact and a passed UX gate looks evidenced until `done` much later.",
+    "gap_shape": "regression-gap",
+    "consumer": "Activation reconcile step",
+    "evidence": "Coverage: lines 4020-4026 unexecuted; the UX-pair test invokes done only."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3708-3751, 3755-3781",
+    "trigger_condition": "`migrate`'s repair branches (missing phase, stale phase gate, missing gate, synthetic audit ticket) are never executed; the only migrate test nulls a level and deletes the tickets map.",
+    "guard_snippet": "Delete a phase node and a newly-required gate, run `migrate`, then assert `validate` is clean and `changed` names both repairs.",
+    "potential_consequence": "The documented corruption-recovery path can silently report no changes and leave the ledger permanently invalid, with no failing test.",
+    "gap_shape": "regression-gap",
+    "consumer": "SKILL.md corruption route and validate's migrate warning",
+    "evidence": "Coverage: 3708-3748 and 3756-3781 unexecuted."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4330-4355",
+    "trigger_condition": "`resize --track audit` (creating the synthetic audit ticket) is never executed; tests only resize audit -> fix and resize sizes.",
+    "guard_snippet": "Resize a feature workstream to audit and assert `tickets.audit` exists with an open review gate and `validate` is ok.",
+    "potential_consequence": "The documented way to change track can leave a ledger that validate itself rejects, with no failing test.",
+    "gap_shape": "regression-gap",
+    "consumer": "resize command used by the conductor",
+    "evidence": "Coverage: 4331-4355 unexecuted."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2930-2937",
+    "trigger_condition": "Rejecting a phase `skipped` write without `--reason` is never executed; every phase-skip test supplies a reason.",
+    "guard_snippet": "Skip a phase with no `--reason` and assert the refusal and message.",
+    "potential_consequence": "A phase can be recorded skipped with no reason, contradicting gate-matrix and the guardrail, and no test pins the reason being persisted.",
+    "gap_shape": "regression-gap",
+    "consumer": "set phase writes",
+    "evidence": "Coverage: line 2937 unexecuted."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2693-2700, 2718-2728",
+    "trigger_condition": "`test_whole_ticket_replacement_runs_the_gate_guards` only reaches `_guard_blocked_gate`; the drop-a-decided-gate guard and the done/review ordering guards never execute.",
+    "guard_snippet": "Replace a ticket while dropping a passed gate, then with `done: passed` and `review: open`, and assert both refusals.",
+    "potential_consequence": "A whole-ticket replacement can erase a decided gate or decide done before review while the test that claims to cover the guards still passes.",
+    "gap_shape": "broken-verification-gap",
+    "consumer": "set --path tickets.<id> --replace",
+    "evidence": "Coverage: 2696-2697, 2719-2722, 2728 unexecuted; 2706-2707 executed."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:730-737",
+    "trigger_condition": "`detect`'s `test_style == \"bmad-testarch\"` branch is never executed; tests only stage exact `bmad-tea` and a fabricated `bmad-tea-trace`.",
+    "guard_snippet": "Stage `bmad-testarch-trace` with no `bmad-tea`, run `detect`, and assert `test_style == bmad-testarch`.",
+    "potential_consequence": "An install that ships the `bmad-testarch-*` family is reported as unknown, so test actions are blocked as missing.",
+    "gap_shape": "regression-gap",
+    "consumer": "version-adapters test_style contract",
+    "evidence": "Coverage: line 735 unexecuted."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:313-330",
+    "trigger_condition": "The rollback branch for a ledger created in the same run (`before is None` -> unlink) is never executed; the rollback test starts from an existing ledger.",
+    "guard_snippet": "Make the first init fail after save (memlog path is a directory) and assert the new ledger is removed.",
+    "potential_consequence": "A first init that fails after save leaves a half-created ledger with no creation event, and the retry skips the template and reports it as existing.",
+    "gap_shape": "regression-gap",
+    "consumer": "first init of activation",
+    "evidence": "Coverage: 318-320 and 326-329 unexecuted."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3813-3828",
+    "trigger_condition": "`discover_matches(\"test_framework\")`, the filesystem walk for playwright/cypress/vitest/jest configs, is never executed.",
+    "guard_snippet": "Write `playwright.config.ts`, run `reconcile`, and assert a `test_framework` orphan is reported and filled under `--write`.",
+    "potential_consequence": "reconcile never offers the framework scaffold, so done later refuses a passed `solution.framework` gate even though the scaffold exists.",
+    "gap_shape": "regression-gap",
+    "consumer": "reconcile orphan discovery",
+    "evidence": "Coverage: 3826-3827 unexecuted; no test creates a framework config."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4068-4076",
+    "trigger_condition": "`reconcile --write`'s ok/exit contract is asserted nowhere, and its only orphan-dependent failure clause is unreachable because `applied` is appended for every orphan.",
+    "guard_snippet": "Test `reconcile --write` in an orphan case and a write-failure case, asserting `ok` and the exit code.",
+    "potential_consequence": "The repair mode's machine signal is unverified, and its intended \"orphan could not be applied\" failure can never fire.",
+    "gap_shape": "other",
+    "consumer": "Activation reconcile --write",
+    "evidence": "No test asserts ok/exit for --write; under write every orphan is appended to `applied`."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/evals/README.md:67",
+    "trigger_condition": "The README claims the ready branch and installed-model skill mapping are \"covered by the ledger tests\", but `ready` exists only in conductor prose; no test or script emits it.",
+    "guard_snippet": "Drop the ready-branch claim or add a graded assertion that `ready` is emitted only when `next_action` is actionable.",
+    "potential_consequence": "A regression in the headless status mapping ships undetected: the README says the ledger tests cover it, and the eval rubrics accept `ready or blocked`.",
+    "gap_shape": "other",
+    "consumer": "evals README grading contract and status assertions",
+    "evidence": "`ready` appears in no test; the only script occurrences are `ready-for-dev` and prose strings."
+  },
+  {
+    "lens": "structure",
+    "location": "docs/bmad-sdlc.md §7 Architecture §7.1-§7.8",
+    "trigger_condition": "Eight subsections restate the reference files as pointers plus constraints already stated there; the design doc contains no architecture of its own.",
+    "guard_snippet": "CONDENSE to one table: component | owning file | binding constraint.",
+    "potential_consequence": "About 285 words of maintenance surface that can drift from the references it quotes."
+  },
+  {
+    "lens": "structure",
+    "location": "references/gate-matrix.md:46, :54",
+    "trigger_condition": "The two rules that settle most contested gate calls (missing evidence blocks; never close a ticket on an override alone) arrive after the procedural list.",
+    "guard_snippet": "MOVE both to the top of §Override rules.",
+    "potential_consequence": "A reader who stops after the four-way list applies the procedure without the rules that constrain it."
+  },
+  {
+    "lens": "structure",
+    "location": "evals/README.md:61",
+    "trigger_condition": "The trigger-mode caveat sits 20 lines below the trigger command it invalidates.",
+    "guard_snippet": "MOVE the paragraph directly under §Run's trigger command.",
+    "potential_consequence": "A reader runs the command and treats meaningless 0.0 scores as verification."
+  },
+  {
+    "lens": "structure",
+    "location": "references/gate-matrix.md §Phase completion :67-71 and :77-82",
+    "trigger_condition": "The same phase-done conditions are stated twice at different granularity in the file that defines closure.",
+    "guard_snippet": "MERGE into one list, marking close-only items.",
+    "potential_consequence": "The two copies can drift, leaving the closure definition self-contradictory."
+  },
+  {
+    "lens": "structure",
+    "location": "docs/bmad-sdlc.md §6 :81-92, references/phase-map.md §Role labels :46-59",
+    "trigger_condition": "The same eight personas and overlapping columns are listed twice; phase-map's table opens as an addendum to a table the reader never saw.",
+    "guard_snippet": "Keep the runtime table in phase-map.md; reduce §6 to the argument plus a pointer.",
+    "potential_consequence": "Two persona owners for one mapping; a name change must be made twice."
+  },
+  {
+    "lens": "structure",
+    "location": "references/ledger-schema.md:174",
+    "trigger_condition": "The summary field set is enumerated in prose, then again in the table immediately below and in SKILL.md:31.",
+    "guard_snippet": "CUT the prose enumeration.",
+    "potential_consequence": "The copy with no schema to validate it is the one most likely to drift."
+  },
+  {
+    "lens": "structure",
+    "location": "references/handoff-protocol.md §Ladder :9-60, §Brief template :16, §Fallback prompts :65",
+    "trigger_condition": "The ladder is the spine, but rung 2 has no section while the other two rungs' templates are displaced below the whole ladder.",
+    "guard_snippet": "MOVE each template under its rung, or add a one-line rung-2 note beside §Brief template.",
+    "potential_consequence": "A reader following the ladder cannot find the inline fallback or connects a template to the wrong rung."
+  },
+  {
+    "lens": "structure",
+    "location": "SKILL.md §Tracks and sizing :100-102, §Ledger and audit :104-108, §Resuming :126-128",
+    "trigger_condition": "Three H2s (131 words) restate content already in their target sections or in ledger-schema.md, which each names.",
+    "guard_snippet": "MERGE the first into §Overview, the second into loop step 5, the third into the close of §On Activation.",
+    "potential_consequence": "Three \"see elsewhere\" headings cost attention on every activation of the always-loaded file."
+  },
+  {
+    "lens": "structure",
+    "location": "README.md §Verify :125-140",
+    "trigger_condition": "The same detect/validate/summary invocations are printed here and in AGENTS.md, and the section then points at AGENTS.md for the exact commands.",
+    "guard_snippet": "CUT the command blocks; keep the detector line and the pointer.",
+    "potential_consequence": "A forked command list drifts from the one it defers to."
+  },
+  {
+    "lens": "structure",
+    "location": "AGENTS.md §Known pitfalls :38-40",
+    "trigger_condition": "A one-item H2 restates the evals README bullet near-verbatim.",
+    "guard_snippet": "CUT the section; keep the rule in evals/README.md.",
+    "potential_consequence": "Two copies of the same pitfall can diverge, and the heading overstates how many pitfalls are known."
+  },
+  {
+    "lens": "structure",
+    "location": "references/phase-map.md:7-18, ledger-schema.md:9-15, gate-matrix.md:5, menu.md, version-adapters.md, handoff-protocol.md",
+    "trigger_condition": "Navigation is inconsistent: two linked Contents lists, one flowed line, three files with none, and ledger-schema's list omits its own H3s.",
+    "guard_snippet": "QUESTION: choose one treatment — drop manual TOCs everywhere or use linked lists with H3 targets everywhere.",
+    "potential_consequence": "A reader cannot tell whether a missing Contents means a short file or an unfinished one."
+  },
+  {
+    "lens": "structure",
+    "location": "references/gate-matrix.md §Gate table :11-29",
+    "trigger_condition": "Eighteen near-identical cells restate one three-value level policy and make an 18x5 table the widest thing in the corpus.",
+    "guard_snippet": "MOVE the level policy into a compact rule block above the table; leave gate/condition/evidence/pass criteria in the table.",
+    "potential_consequence": "The table is hard to scan, and each cell can drift from the resolver independently."
+  },
+  {
+    "lens": "structure",
+    "location": "references/phase-map.md:186",
+    "trigger_condition": "The trivial-size and audit-track rules sit between the Fix and Audit flow blocks, so a scanning reader assigns both to fix.",
+    "guard_snippet": "MOVE the trivial sentence to §Sizing and the audit sentence to §Audit.",
+    "potential_consequence": "A reader applying the fix flow absorbs rules that belong to other tracks."
+  },
+  {
+    "lens": "structure",
+    "location": "references/version-adapters.md:31 and :61",
+    "trigger_condition": "The same model-recording instruction appears twice in one file, 30 lines apart.",
+    "guard_snippet": "MERGE into the \"Model unknown\" row of §Missing-skill behavior and delete the §Detection copy.",
+    "potential_consequence": "One copy changes and the other becomes wrong."
+  },
+  {
+    "lens": "structure",
+    "location": "references/ledger-schema.md §set rules :279",
+    "trigger_condition": "Eight distinct rules sit in one 111-word paragraph, in a file whose other rule section is a table.",
+    "guard_snippet": "CONDENSE to a bullet list mirroring §Field rules.",
+    "potential_consequence": "A reader cannot scan or cite a specific set rule."
+  },
+  {
+    "lens": "structure",
+    "location": "references/handoff-protocol.md §Validation checklist :106-114",
+    "trigger_condition": "Two of five checklist items restate contract clauses stated ten lines above.",
+    "guard_snippet": "MERGE items 2 and 5 into §Return contract; keep 1, 3, 4 as pre-acceptance checks.",
+    "potential_consequence": "The checklist reads as a second contract and can disagree with the first."
+  },
+  {
+    "lens": "structure",
+    "location": "docs/bmad-sdlc.md §8 Build record :141-143",
+    "trigger_condition": "A whole H2 says only that its content moved elsewhere, plus a scope statement that belongs at the top.",
+    "guard_snippet": "MERGE into the preamble as one clause naming where the build history lives.",
+    "potential_consequence": "Readers spend a heading on a forwarding notice."
+  },
+  {
+    "lens": "structure",
+    "location": "README.md:88, :140",
+    "trigger_condition": "Live checkout state (ledger `ws-001`, detector v6) is written into a durable README without an owner to refresh it.",
+    "guard_snippet": "MOVE to AGENTS.md or label it as sample output inside §Verify.",
+    "potential_consequence": "The README is wrong after the next resize or BMAD install."
+  },
+  {
+    "lens": "structure",
+    "location": "SKILL.md §Guardrails :110-124",
+    "trigger_condition": "Fifteen flat bullets give no handle for \"which rule did I break?\"",
+    "guard_snippet": "PRESERVE the wording; reorder into gate rules, consent/destructiveness, and boundaries/honesty.",
+    "potential_consequence": "The always-loaded safety list is harder to recall under pressure."
+  },
+  {
+    "lens": "structure",
+    "location": "docs/bmad-sdlc.md §4 D13 :53, D21 :61",
+    "trigger_condition": "Tombstone rows look cuttable but stable decision IDs are what a decision log is for.",
+    "guard_snippet": "PRESERVE.",
+    "potential_consequence": "Renumbering would break references to the decisions."
+  },
+  {
+    "lens": "structure",
+    "location": "references/handoff-protocol.md §What the conductor keeps :116-125",
+    "trigger_condition": "Reads as a restatement of the intro but is the mental model a human needs before trusting a handoff.",
+    "guard_snippet": "PRESERVE.",
+    "potential_consequence": "Cutting it removes reinforcement the handoff depends on."
+  },
+  {
+    "lens": "structure",
+    "location": "references/phase-map.md §Per-track flows :156-195",
+    "trigger_condition": "Repeats the phase tables' order but is the only place the whole flow is visible at once.",
+    "guard_snippet": "PRESERVE.",
+    "potential_consequence": "Cutting it removes the section's synthesis, which is what a human scans."
+  },
+  {
+    "lens": "prose",
+    "location": "SKILL.md:26",
+    "trigger_condition": "Four status definitions share one 45-word sentence with mixed shape (`when` + adjective for two, `when` + three unmarked conditions for a third).",
+    "guard_snippet": "Use parallel `means` clauses: `ready` means ..., `blocked` means ..., `needs_input` means ..., `done` means .....",
+    "potential_consequence": "A reader must re-parse the sentence to learn which conditions map to which status."
+  },
+  {
+    "lens": "prose",
+    "location": "SKILL.md:87",
+    "trigger_condition": "The one action that must not happen (do not mark the phase blocked) reads as a fifth parallel step in the missing-skill recipe.",
+    "guard_snippet": "Split it into its own sentence; also name the file in \"see §Role labels there\".",
+    "potential_consequence": "The prohibition is easy to miss or execute in the wrong order."
+  },
+  {
+    "lens": "prose",
+    "location": "references/gate-matrix.md:58",
+    "trigger_condition": "\"moves again only with --reason, whichever status it moves to, including a move back to passed\" states one condition three times.",
+    "guard_snippet": "\"Changing a decided gate to any status, including back to `passed`, needs --reason.\"",
+    "potential_consequence": "The rule reads as more conditional than it is."
+  },
+  {
+    "lens": "prose",
+    "location": "references/gate-matrix.md:73",
+    "trigger_condition": "Three rules share one sentence with the exception folded inside the condition.",
+    "guard_snippet": "Split into three sentences and keep the `plan.ux` clause once when the structure pass merges :67-71 with :77-82.",
+    "potential_consequence": "A reader can miss the `plan.ux` exception or the phase-cache rule."
+  },
+  {
+    "lens": "prose",
+    "location": "SKILL.md:56, references/version-adapters.md:31 and :61",
+    "trigger_condition": "The same model-recording rule appears in three wordings; \"Never ... unless the user explicitly answers\" reads as self-contradiction.",
+    "guard_snippet": "Use one canonical sentence: write a model only when the detector confirmed it or the user answered explicitly.",
+    "potential_consequence": "A reader cannot tell which copy governs when they differ."
+  },
+  {
+    "lens": "prose",
+    "location": "references/version-adapters.md:22, :47, :51",
+    "trigger_condition": "Two same-sentence restatements of the never-invent-an-alias rule; each adds no rule the preceding clause lacks.",
+    "guard_snippet": "Keep :22's first clause and :51's named error class; delete the duplicate at :47.",
+    "potential_consequence": "The repetition makes the alias rule look like three separate requirements."
+  },
+  {
+    "lens": "prose",
+    "location": "references/handoff-protocol.md:9, :11, :108",
+    "trigger_condition": "Once the structure pass moves the templates under their rungs, \"below\", \"§Fallback prompts\", and \"above\" point at the wrong place; \"runs it\" loses its object.",
+    "guard_snippet": "Say \"the brief in this rung\", \"the two prompt templates in this rung\", and \"confirm §Return contract\".",
+    "potential_consequence": "Cross-references break exactly when the document is reorganized."
+  },
+  {
+    "lens": "prose",
+    "location": "evals/README.md:50",
+    "trigger_condition": "A 40-word subject with a seven-item aside sits between the reader and the verb.",
+    "guard_snippet": "Actor first: \"scripts/tests/test_sdlc_plan.py covers the deterministic write loop: ... These LLM cases do not cover it.\"",
+    "potential_consequence": "A reader must hold seven items before learning the sentence's point."
+  },
+  {
+    "lens": "prose",
+    "location": "evals/README.md:56",
+    "trigger_condition": "\"no gate advanced\" drops the auxiliary, and the closing sentence repeats :50.",
+    "guard_snippet": "Use \"no gate was advanced\" and delete the duplicate closing sentence.",
+    "potential_consequence": "The three parallel `that` clauses no longer parse together."
+  },
+  {
+    "lens": "prose",
+    "location": "references/ledger-schema.md:174",
+    "trigger_condition": "The structure pass cuts the sentence that supplied \"It\", leaving the paragraph starting on a pronoun with no antecedent.",
+    "guard_snippet": "Start with \"`summary` always returns the full shape ...\" and name the section's refusals and accept flags.",
+    "potential_consequence": "The surviving paragraph begins without a subject."
+  },
+  {
+    "lens": "prose",
+    "location": "references/menu.md:7",
+    "trigger_condition": "\"Render ... Render\" back to back; you compute counts and render rows.",
+    "guard_snippet": "\"Render it first, and keep it scannable. Compute each row's counts from ...\"",
+    "potential_consequence": "The instruction reads as two render passes."
+  },
+  {
+    "lens": "prose",
+    "location": "skills/bmad-sdlc-module/setup/SKILL.md:55",
+    "trigger_condition": "\"the defaults are feature and epic, with fix/audit defaulting to one-session\" does not say which default belongs to which parameter.",
+    "guard_snippet": "\"Ask for the track and size, defaulting to feature and epic. A fix or audit defaults to size one-session.\"",
+    "potential_consequence": "A reader cannot tell whether fix/audit also default the track."
+  },
+  {
+    "lens": "prose",
+    "location": "docs/bmad-sdlc.md:131",
+    "trigger_condition": "\"BMAD artifacts stay truth for ticket status\" is missing an article and uses a different term than the rest of the corpus.",
+    "guard_snippet": "\"stay the source of truth for ticket status\".",
+    "potential_consequence": "The terminology drifts from §2, §4 D20, and ledger-schema."
+  },
+  {
+    "lens": "prose",
+    "location": "AGENTS.md:10",
+    "trigger_condition": "The period makes the exception look like a separate rule.",
+    "guard_snippet": "Use a semicolon: \"...`bmad-*/`; `bmad-sdlc` is the sole exception.\"",
+    "potential_consequence": "A reader can read the exception as unrelated to the prohibition."
+  },
+  {
+    "lens": "prose",
+    "location": "AGENTS.md:36",
+    "trigger_condition": "\"help entry ... the help entry\" repeats, and \"is not registration\" leaves the object implicit.",
+    "guard_snippet": "\"The module help entry appears only after the BMAD installer assembles it from ...; copying that file does not register the module.\"",
+    "potential_consequence": "The reader cannot tell what is not being registered."
+  },
+  {
+    "lens": "prose",
+    "location": "SKILL.md:106",
+    "trigger_condition": "A JSON field cannot exit; the command does.",
+    "guard_snippet": "\"A command that returns `ok: false` exits non-zero ...\"",
+    "potential_consequence": "The sentence attributes an action to the wrong subject."
+  },
+  {
+    "lens": "prose",
+    "location": "SKILL.md:95",
+    "trigger_condition": "The appositive reads as \"a done return does not need the ledger\", not \"the artifact may not be the ledger\".",
+    "guard_snippet": "\"... needs one artifact inside `{project-root}` other than the ledger or the audit trail ...\"",
+    "potential_consequence": "A reader may believe the return check exempts the ledger rather than forbids it."
+  },
+  {
+    "lens": "prose",
+    "location": "references/phase-map.md:158",
+    "trigger_condition": "\"Each arrow is an action id\" says the arrows themselves are ids.",
+    "guard_snippet": "\"Each element in these flows is an action id.\"",
+    "potential_consequence": "A reader misreads the diagram's notation."
+  },
+  {
+    "lens": "prose",
+    "location": "SKILL.md:44",
+    "trigger_condition": "`file:` entries dangle with no noun to attach to; two unrelated instructions are joined by a semicolon.",
+    "guard_snippet": "\"Run `{workflow.activation_steps_prepend}`. Load `{workflow.persistent_facts}`, where `file:` entries load as facts.\"",
+    "potential_consequence": "The loader rule can attach to the wrong instruction."
+  },
+  {
+    "lens": "prose",
+    "location": "references/handoff-protocol.md:131",
+    "trigger_condition": "One sentence switches from description to instruction at \"but never run\".",
+    "guard_snippet": "Split into a description sentence and an imperative sentence.",
+    "potential_consequence": "The safety instruction is camouflaged as a subordinate clause."
+  }
+]

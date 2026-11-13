@@ -1,6 +1,6 @@
 name: BMAD SDLC Conductor
 code: bmad-sdlc
-version: 0.2.0
+version: 0.2.1
 description: >-
   One front door for the whole BMAD software development lifecycle. Detects the
   installed BMAD model, keeps a durable per-product plan, presents a phase/action

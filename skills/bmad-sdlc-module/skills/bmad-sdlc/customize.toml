@@ -2,7 +2,7 @@
 #
 # Workflow customization surface for bmad-sdlc.
 #
-# Override files (not edited here):
+# Override files live in the project, not in this file:
 #   {project-root}/_bmad/custom/bmad-sdlc.toml        (team)
 #   {project-root}/_bmad/custom/bmad-sdlc.user.toml   (personal)
 #

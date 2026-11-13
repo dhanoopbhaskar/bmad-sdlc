@@ -153,3 +153,166 @@ Verification after the fixes:
 - `quick_validate`, `prepass-workflow-integrity`, `scan-path-standards`, and `scan-scripts` are clean; SKILL.md is 2,500 tokens.
 - The quality eval grades remain 10/10 cases and 62/62 expectations; the two corrected rubrics (R7, R8) still pass against the existing transcripts.
 
+
+## Re-review round 3 fixes (2026-11-13)
+
+Source: `2026-11-13-bmad-sdlc-r3.md` / `.findings.json`.
+
+- [x] **A1/A2/E1** — `_guard_blocked_gate` now reads `_written_gate`, so a whole-node `--replace` cannot pass a blocked gate. `_validate_value` requires a status on every gate-node write.
+- [x] **A3/A4** — `get_parent` matches the longest existing ticket id, dots included; `_validate_path` resolves the gate segment from the ticket map and refuses to create an unknown dotted id. Dotted ids now work with `set` and `ticket`.
+- [x] **A5/A6/E2/E3** — A decided gate moves only with `--reason`, including to `blocked`; `decided_at` and `override_reason` are cleared on `open`/`blocked`. A gate on a done workstream is refused until the workstream is reopened; a done/skipped phase reopen needs `--reason`.
+- [x] **A7/A8** — `set --path tickets.<id> --delete --reason` removes a ticket atomically; the ledger-schema example now uses it.
+- [x] **A9** — `--project-root` is expanded in `detect`, `init`, `done`, `reconcile`, and `verify-return`; `done` also checks that it is a directory.
+- [x] **A10** — `done` accepts a missing ticket artifact with `--accept-missing-tickets --reason` even on a custom ledger path, normalizes mixed string/integer ids, and names the accepted gap in the close memlog line.
+- [x] **A11/A12** — The reopen contract is documented in `gate-matrix.md` §Reopening and `menu.md`; `SKILL.md` gains the reopen guardrail.
+- [x] **V1–V6** — Tests added for the phase `_guard_reopen` branch, node replacement, close-note reason, dotted ids, `set` reopen metadata, workstream reopen, unknown dotted ids, mixed ids, custom-ledger `done`, token expansion, and `--delete`. `test_migrate_materializes_levels_and_tickets` now stages the missing map with `edit_ledger`.
+- [x] **S1–S5, S7–S10, S12–S18** — Applied the editorial structure findings: cut the model/write duplication, merged the ledger/audit restatements, broke the gate/menu pointer loop, moved Headless before activation, reordered the status enum, shortened Tracks, removed the duplicate levels bullet, added Contents and field rows, split §Script operations into H3s, merged the eval notes, moved the fallback prompts, and merged Roles into the loop.
+- [x] **P1–P17** — Applied the prose fixes, including the two factual ones: `--reason` alone does not accept a gap (the accept flags are also required), and a resumed model answer goes to `set --path bmad.model`.
+- [x] **S6, S11** — The version-adapters table now keeps only capabilities with no per-action home and points at `phase-map.md`; §Script operations is split into Summary shape, Commands, set rules, and Hand-edit fallback.
+
+Verification after the round-3 fixes:
+
+- **112/112** unittest cases pass (515 s).
+- `package.sh --check` reports the module copy in sync.
+- `quick_validate`, `prepass-workflow-integrity`, `scan-path-standards`, and `scan-scripts` are clean.
+- The live `_bmad-output/sdlc/plan.yaml` validates with no errors or warnings.
+- The eval cases were not re-run; the routing behavior they exercise is unchanged. The recorded quality run remains 10/10 cases and 62/62 expectations.
+
+## Round 4 fixes (2026-11-13)
+
+Source: `2026-11-13-bmad-sdlc-r4.md` / `.findings.json`. All 52 findings fixed; no deferrals.
+
+### State machine (adversarial A1–A18, edge E1–E4)
+
+- [x] **A1/A2** — `workstreams.*` is no longer writable; the `bmad` block now needs `--replace --reason`, validates its model and paths, and refuses to drop the recorded `memlog`.
+- [x] **A3/A4/A5** — Switching `active_workstream` to a done workstream needs `--reason`; any other transition out of `done` is refused; activating a workstream pauses the previously active one, so `validate` never sees two.
+- [x] **A6/A7/A18** — A done workstream accepts no gate, phase, or ticket write (including `--delete`) until reopened; the synthetic `audit` ticket cannot be deleted.
+- [x] **A8** — A decided gate can move back to `passed` with `--reason` (the flag was previously rejected before the reopen guard ran).
+- [x] **A9/A11** — A ticket gate cannot reopen while `build` is done/skipped, and `build` cannot be marked done with no ticket.
+- [x] **A10/A14/E1** — Dotted ticket ids resolve through the ticket map for metadata, gate, and prefix checks; a prefix that is not an exact id is refused, and whole dotted nodes are validated.
+- [x] **A12/A13** — Whole-ticket replacement runs the blocked, reopen, order, and dropped-reason guards; `done` re-checks ticket order before closing.
+- [x] **A15** — A phase node cannot carry the derived `gate` field or undefined `decided_at`/`override_reason`.
+- [x] **A17** — `resize` requires `--reason` when it reopens a phase and names the reopened phases in the audit trail.
+- [x] **E2/E3/E4** — `--delete` matches integer-keyed ids, `--memlog` expands `{project-root}`, and the audit ticket is protected.
+- [x] **A16** — `gate-matrix.md` now says `done`, not `set`, verifies evidence; the code already enforced it there.
+
+### Verification (V1–V10)
+
+- [x] Tests added for: dotted metadata clearing, the `_guard_reopen` done branch through `set`, `active_workstream` reopen, the status-reopen audit line, whole-ticket replacement, token expansion in `detect`/`reconcile`/`verify-return`, both close-note accept branches, delete-after-close, the audit ticket, integer keys, and resize reopening.
+- [x] **V8/V9** — The eval rubrics now assert persisted state (ledger existence, track/size/model, next gate, unchanged staged ledger) and no writes outside the case root; the scope guardrail was added to `SKILL.md`. A fresh quality run re-graded.
+
+### Documentation (structure S1–S9, prose P1–P9)
+
+- [x] Structural cuts: reconcile paragraph condensed, the close rule merged into `gate-matrix.md`, `docs/bmad-sdlc.md` §7.1/§7.2 reduced to pointers and the tree deduplicated, the alias table merged, README decisions and eval blocks condensed, the duplicate decision rows marked merged.
+- [x] Prose fixes: `--workstream <id>` added to both reopen commands; headless default wording clarified; the v6 detector row includes `bmad-sprint-planning`; the settled open questions recorded; §7.4 authority clarified; alias grammar fixed; `validate` "fails on" an override; the setup "it" resolved; `--memlog` expansion is now true in code and docs.
+
+### Verification after round 4
+
+- **132/132** unittest cases pass.
+- `package.sh --check` reports the module copy in sync.
+- `quick_validate`, `prepass-workflow-integrity`, `scan-path-standards`, and `scan-scripts` are clean.
+- Fresh quality eval run `~/bmad-evals/bmad-sdlc/20261113-161517-r4-fixes`: 10/10 cases executed; **73/73 expectations** graded beside each transcript.
+
+## Round 5 review (2026-11-13, open)
+
+Source: `2026-11-13-bmad-sdlc-r5.md` / `.findings.json` (67 findings: 18 adversarial, 8 edge-case, 13 verification-gap, 18 structure with 2 preserves, 10 prose).
+
+Status at review time: unit suite **132/132**, `package.sh --check` in sync, `detect` v6/`bmad-help`. The recorded round-4 quality run still shows 10/10 cases and 73/73 expectations, but its own `rubric_feedback.weak` says the "no file outside the project root" expectation is false for every `uv` run, so the score is not evidence for the scope guardrail.
+
+Highest-impact open items: phase evidence bypasses the per-gate artifact and UX checks; `verify-return --allow-empty-artifacts` accepts an empty evidence list; `--memlog` expands against cwd; `validate` exits 0 on errors.
+
+## Round 5 fixes (2026-11-13)
+
+Source: `2026-11-13-bmad-sdlc-r5.md` / `.findings.json`. All 67 findings were addressed; no deferrals. Two were resolved by documentation instead of a behavior change (the audit/trivial exception and the eval read-scope limitation).
+
+### State machine and guards (adversarial A1-A18, edge E1-E8)
+
+- **A1** `done` now checks `plan.ux` before the phase-evidence short-circuit, so both `DESIGN.md` and `EXPERIENCE.md` are always required; `reconcile` matches.
+- **A2** `--allow-empty-artifacts` no longer waives an explicitly empty `evidence` list.
+- **A3/E2** `--memlog` and a relative `--plan`/`--memlog` resolve against the command's `--project-root`, not the shell cwd; `init` uses the same rule.
+- **A4** `validate`, `reconcile`, and `verify-return` exit 1 when `ok` is false; `SKILL.md` and `ledger-schema.md` document the contract.
+- **A5/E8** `ledger_touched` compares whole porcelain paths, so `.lock` files no longer match. The lock files stay on disk: unlinking a lock while another process waits is racy, so the file remains and the check is exact instead.
+- **A6** `set --path phases.<phase>.evidence` is append-only in every form; `--replace` and `--null` are refused.
+- **A7** `done` records every overridden phase and ticket gate in the close note.
+- **A9/E6** `track` and `size` are documented as `summary.workstream` fields; `close.mark_done` and `<phase>.unblock` are exempt from the missing-skill rule.
+- **A11** The missing-skill side effect is now one instruction: emit `status: blocked` and record the reason with `set --path phases.<phase>.note`.
+- **A12/E8** `detect` matches only an exact `bmad-tea` directory; `bmad-tea-*` names no longer make detection look ready.
+- **A13/A14** Audit/trivial keeps `verify.trace` required, documented in `phase-map.md` and `gate-matrix.md`.
+- **A17/A18** Setup refuses a target that is not `*/skills/bmad-sdlc`, backs up before copying, and reports the installed `VERSION`; the version file now ships.
+- **E1** A `--memlog` equal to the ledger fails fast instead of deadlocking on the lock.
+- **E3** A null `active_workstream` is refused while a workstream is active, and `validate` flags a hand-edited one.
+- **E4** A phase replacement needs `status` and `evidence`; the derived `gate` is carried forward.
+- **E5** Accepted questions are logged only after the return passes.
+- **E7** The handoff brief uses `<resolved ledger path>` / `<resolved audit path>` instead of unresolved `{}` tokens.
+- **E8** `validate` rejects two ticket ids that normalize to the same string.
+
+### Verification (V1-V13)
+
+- Tests added for: the rollback path (memlog replaced by a directory), outside-root pointers in `done` and `reconcile`, the migrate correction line, the decided-audit resize refusal, the `plan.ux` pair, manifest detection, a `.claude/skills` install, `test_style`/`hub`, `optional_open` and `workstreams_detail`, the fourth config layer, and `init --default-track`.
+- **V8/V9** The `continue-with-ledger` rubric is scoped to writes under `_bmad-output/sdlc/` and forbids out-of-root reads; `evals/README.md` records the symlink and metadata limits. The vendor runner is not edited.
+
+### Documentation (structure S1-S18, prose P1-P10)
+
+- Cut the duplicate close paragraph and the `set` comment block; merged phase completion and summary fields into their owners; removed the duplicated unittest/eval blocks from `README.md`.
+- Condensed `docs/bmad-sdlc.md` §7.5-§7.8 to constraints and pointers, and §7.3 to entry points.
+- Applied the prose fixes: four-way framing, `workstreams.*` in the set rules, `ledger_touched` attribution, track/size ordering, `<phase>.unblock`, "the report" wording, the installer relation, the `unknown` diagnosis, the `verify.trace` antecedent, and the reopen antecedent.
+
+### Verification after the fixes
+
+- **152/152** unittest cases pass (343 s).
+- `package.sh --check` reports the module copy in sync; `VERSION` 0.2.0 ships and matches `module.yaml`.
+- `quick_validate` ok; `prepass-workflow-integrity` 0 issues; `scan-path-standards` 0 findings; `scan-scripts` 0 findings.
+- `SKILL.md` is 2,472 tokens (budget 2,500).
+- The live ledger validates with no errors or warnings; `reconcile` is clean; `detect` reports v6, hub `bmad-help`, test style `bmad-tea`.
+- Exit-code contract verified end to end: `validate` and `verify-return` exit 1 on `ok:false`; `reconcile --write` still persists its corrections when it exits 1 for drift.
+
+The verification commands:
+
+```
+uv run --no-cache python -m unittest discover -s .agents/skills/bmad-sdlc/scripts/tests -p 'test_*.py'
+skills/bmad-sdlc-module/scripts/package.sh --check
+uv run --no-cache .agents/skills/bmad-workflow-builder/scripts/quick_validate.py .agents/skills/bmad-sdlc
+uv run --no-cache .agents/skills/bmad-workflow-builder/scripts/prepass-workflow-integrity.py .agents/skills/bmad-sdlc
+uv run --no-cache .agents/skills/bmad-workflow-builder/scripts/scan-path-standards.py .agents/skills/bmad-sdlc
+uv run --no-cache .agents/skills/bmad-workflow-builder/scripts/scan-scripts.py .agents/skills/bmad-sdlc
+```
+
+## Round 6 fixes (2026-11-13)
+
+Source: `2026-11-13-bmad-sdlc-r6.md` / `.findings.json` (86 findings: 16 adversarial, 14 edge-case, 14 verification-gap, 22 structure including 3 preserves, 20 prose).
+
+Status: **85 addressed, 1 deferred, 1 partial**. No behavior finding was left open.
+
+### Behavior (adversarial A1-A16, edge E1-E15)
+
+- **Audit trail cannot brick the ledger.** `set --path bmad` and a recorded `bmad.memlog` now refuse a path equal to the ledger; the recorded branch is checked on every resolve, so a hand-edited ledger fails with JSON instead of deadlocking on its own lock. Read-only reconcile no longer creates `plan.yaml.lock`.
+- **Paused is a real state.** `set`, `append`, and `ticket` refuse writes on a paused workstream; resume takes `--workstream <id> --path status --value active --reason`.
+- **Model changes are reasoned.** `set --path bmad.model unknown` needs `--reason`, judged against the pre-write model; `set` and `init` require `--reason` when the change reopens a phase and log the reopened phases.
+- **Ticket lifecycle.** `set --path tickets.<id> --delete` refuses a ticket with a decided gate or the last ticket of a done build; `ticket` refuses writes under a done build phase; `set` refuses to create a ticket; a whole-ticket replacement cannot drop a decided gate.
+- **Gate evidence.** Phase evidence no longer short-circuits per-gate artifacts; directories are rejected (`is_file()`); `artifacts.ux` resolves the DESIG+EXPERIENCE pair from its pointer before the planning-artifacts glob.
+- **Reconcile repair.** `--write` blocks open required/conditional gates from `gates_to_block` and from `phases_to_block`, logs them, and reports decided gates/phases in `requires_reason` instead of silently reopening them. The unreachable orphan clause is gone.
+- **Handoff evidence.** `verify-return` requires an `evidence` key with entries that exist inside the project root; `--allow-empty-artifacts` needs `--reason` and is logged.
+- **Model awareness.** `summary --project-root` adds `next_action.skill_installed`; `SKILL.md` uses it for the missing-skill rule.
+- **Validation.** `name` and `started` are type-checked; artifact pointers must stay inside the project root; malformed `_bmad/config*.toml` surfaces as `config_errors` and blocks `init`; `migrate` reopens a phase its new gates invalidate; v6 sprint-status epic rows are not tickets; a gate-node replacement keeps `level`, `decided_at`, and `override_reason`.
+- **CLI contract.** Invalid `ticket --gate/--status` values emit JSON instead of argparse usage text.
+
+### Tests
+
+- 29 tests added or updated, including the uncovered branches named by the verification-gap lens: project-size routing, sprint-status overlay, evidence validation, the done "(no artifact)" branch, reconcile `<phase>.ux`, migrate repair, `resize --track audit`, phase-skip reason, whole-ticket guards, `bmad-testarch` detection, first-init rollback, `test_framework` discovery, and the `reconcile --write` exit contract.
+- Suite: **181 tests** (see verification below).
+
+### Documentation (structure S1-S19, prose P1-P20)
+
+- Condensed `docs/bmad-sdlc.md` §7 to a component/owner/constraint table and the persona table to a pointer at `phase-map.md` §Role labels; moved the build record into the preamble.
+- Moved the missing-evidence and no-override-close rules to the top of `gate-matrix.md` §Override rules, merged its phase-completion lists, and updated the close rule to per-gate artifacts.
+- Moved the trigger-mode caveat under the eval command that it invalidates; corrected the eval README's `ready`-branch coverage claim; recut the write-loop and `continue-with-ledger` paragraphs.
+- Added a linked Contents block to all six reference files; moved the trivial/audit rules to `phase-map.md` §Sizing; merged the version-adapters model instruction; converted `ledger-schema.md` §set rules to bullets; merged the handoff checklist into the return contract; cut the duplicated README verify commands and live checkout state; cut the one-item AGENTS pitfall.
+- Applied all 20 prose fixes (status definitions, prohibition placement, duplicated model rule, alias restatements, dangling references, actor-first sentences, article/term fixes, and the split description/instruction).
+- **Deferred:** S12 (move the gate-table level policy out of the 18-row table). The column is the concrete per-gate authority and a compact rule block would restate the resolver less precisely; the table stays. **Partial:** S8 keeps `SKILL.md` §Ledger and audit because the always-loaded file needs the lock/audit rule even when no reference loads; the tracks and resuming sections were merged.
+
+### Verification after round 6
+
+- **181/181** unittest cases pass.
+- `package.sh --check` reports the module copy in sync; `VERSION` and `module.yaml` are **0.2.1**.
+- `quick_validate`, `prepass-workflow-integrity`, `scan-path-standards`, `scan-scripts`, and `prepass-prompt-metrics` are clean; `SKILL.md` is 2,500 tokens (budget 2,500).
+- The live `_bmad-output/sdlc/plan.yaml` validates with no errors or warnings; `detect` reports v6, hub `bmad-help`, test style `bmad-tea`.
