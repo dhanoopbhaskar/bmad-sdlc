@@ -887,18 +887,8 @@ class LedgerTests(unittest.TestCase):
 
     def test_audit_without_ticket_cannot_close(self) -> None:
         self.init_track("audit")
-        run(
-            "set",
-            "--plan",
-            str(self.ledger),
-            "--workstream",
-            "ws-001",
-            "--path",
-            "tickets",
-            "--null",
-            "--replace",
-            "--reason",
-            "simulate a lost audit ticket",
+        self.edit_ledger(
+            "del data['workstreams']['ws-001']['tickets']['audit']"
         )
         for gate, status in (
             ("trace", "passed"),
@@ -1293,7 +1283,14 @@ class LedgerTests(unittest.TestCase):
                 "--status",
                 "passed",
             )
-        run("done", "--plan", str(self.ledger))
+        run(
+            "done",
+            "--plan",
+            str(self.ledger),
+            "--accept-missing-tickets",
+            "--reason",
+            "summary shape fixture",
+        )
         summary = run("summary", "--plan", str(self.ledger))
         for key in (
             "phases",
@@ -1705,6 +1702,205 @@ class LedgerTests(unittest.TestCase):
         self.assertFalse(refused["ok"])
         self.assertIn("blocked", refused["error"])
 
+    def test_done_refuses_tickets_without_a_ticket_artifact(self) -> None:
+        self.init_track("fix", "trivial")
+        for gate in ("ticket", "review", "done"):
+            run(
+                "ticket",
+                "--plan",
+                str(self.ledger),
+                "--workstream",
+                "ws-001",
+                "--id",
+                "T1",
+                "--gate",
+                gate,
+                "--status",
+                "passed",
+            )
+        refused = run("done", "--plan", str(self.ledger))
+        self.assertFalse(refused["ok"])
+        self.assertIn("no readable ticket artifact", refused["error"])
+        accepted = run(
+            "done",
+            "--plan",
+            str(self.ledger),
+            "--accept-missing-tickets",
+            "--reason",
+            "ledger-only fixture",
+        )
+        self.assertTrue(accepted["ok"], accepted)
+
+    def test_ticket_refuses_a_blocked_gate_passed(self) -> None:
+        self.init_track("fix", "trivial")
+        run(
+            "ticket",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--id",
+            "T1",
+            "--gate",
+            "ticket",
+            "--status",
+            "passed",
+        )
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "tickets.T1.gates.review.status",
+            "--value",
+            "blocked",
+        )
+        refused = run(
+            "ticket",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--id",
+            "T1",
+            "--gate",
+            "review",
+            "--status",
+            "passed",
+        )
+        self.assertFalse(refused["ok"])
+        self.assertIn("blocked gate cannot be passed", refused["error"])
+
+    def test_reopening_a_decided_gate_needs_a_reason_and_order(self) -> None:
+        self.init_track("fix", "trivial")
+        for gate in ("ticket", "review"):
+            run(
+                "ticket",
+                "--plan",
+                str(self.ledger),
+                "--workstream",
+                "ws-001",
+                "--id",
+                "T1",
+                "--gate",
+                gate,
+                "--status",
+                "passed",
+            )
+        refused = run(
+            "ticket",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--id",
+            "T1",
+            "--gate",
+            "ticket",
+            "--status",
+            "open",
+        )
+        self.assertFalse(refused["ok"])
+        self.assertIn("needs --reason", refused["error"])
+        refused = run(
+            "ticket",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--id",
+            "T1",
+            "--gate",
+            "ticket",
+            "--status",
+            "open",
+            "--reason",
+            "retry",
+        )
+        self.assertFalse(refused["ok"])
+        self.assertIn("later gates are decided: review", refused["error"])
+        reopened = run(
+            "ticket",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--id",
+            "T1",
+            "--gate",
+            "review",
+            "--status",
+            "open",
+            "--reason",
+            "rework the review",
+        )
+        self.assertTrue(reopened["ok"], reopened)
+        summary = run("summary", "--plan", str(self.ledger))
+        review = summary["tickets"]["items"]["T1"]["gates"]["review"]
+        self.assertEqual(review["status"], "open")
+        self.assertIsNone(review["override_reason"])
+
+    def test_set_reopening_a_decided_gate_needs_a_reason(self) -> None:
+        self.init_track("fix", "trivial")
+        run(
+            "ticket",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--id",
+            "T1",
+            "--gate",
+            "ticket",
+            "--status",
+            "passed",
+        )
+        refused = run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "tickets.T1.gates.ticket.status",
+            "--value",
+            "open",
+        )
+        self.assertFalse(refused["ok"])
+        self.assertIn("needs --reason", refused["error"])
+        accepted = run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "tickets.T1.gates.ticket.status",
+            "--value",
+            "open",
+            "--reason",
+            "reopen for rework",
+        )
+        self.assertTrue(accepted["ok"], accepted)
+
+    def test_set_rejects_a_dotted_ticket_id(self) -> None:
+        self.init_track("fix", "trivial")
+        refused = run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "tickets.1.3.gates.review.status",
+            "--value",
+            "passed",
+        )
+        self.assertFalse(refused["ok"])
+        self.assertIn("ticket command", refused["error"])
+
     def test_done_writes_to_the_memlog_recorded_at_init(self) -> None:
         trail = self.tmp / "audit" / "trail.md"
         trail.parent.mkdir(parents=True)
@@ -1735,7 +1931,16 @@ class LedgerTests(unittest.TestCase):
                 "--status",
                 "passed",
             )
-        payload = run("done", "--plan", str(self.ledger), "--workstream", "ws-001")
+        payload = run(
+            "done",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--accept-missing-tickets",
+            "--reason",
+            "memlog path fixture",
+        )
         self.assertTrue(payload["ok"], payload)
         self.assertIn("marked done", trail.read_text())
         self.assertFalse((self.ledger.parent / ".memlog.md").exists())
@@ -2176,6 +2381,13 @@ class LedgerTests(unittest.TestCase):
 
     def test_done_requires_evidence_and_its_accept_flag_needs_a_reason(self) -> None:
         self.init_track("fix", "one-session")
+        implementation = (
+            self.tmp / "_bmad-output" / "implementation-artifacts" / "tickets"
+        )
+        implementation.mkdir(parents=True)
+        (implementation / "tickets.toml").write_text(
+            "[tickets.T1]\ntitle = \"T1\"\n", encoding="utf-8"
+        )
         for gate in ("ticket", "tests", "review", "done"):
             run(
                 "ticket",

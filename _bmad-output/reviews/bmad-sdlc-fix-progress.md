@@ -131,3 +131,25 @@ Result: **107 fixed, 2 deferred**. The two deferred items (V8, V9) need a richer
 - The live `_bmad-output/sdlc/plan.yaml` validates with no errors or warnings; `detect` excludes the conductor; `reconcile` reports no drift.
 - Eval re-check of `fix-trivial` and `fix-one-session` did not run: the provider returned HTTP 402 Insufficient Balance. Re-run those two cases when credit is available; both now structurally emit `build.ticket`.
 
+## Re-review (2026-11-13, round 2)
+
+Source: `2026-11-13-bmad-sdlc-r2.md`. Status: `[ ]` open, `[~]` in progress, `[x]` fixed, `[-]` deferred (reason).
+
+- [x] **R1** `sdlc_plan.py:109,550-589,3040-3060` — `done` closed a workstream with passed ticket gates and no build evidence — `done` now refuses a non-empty ticket map when no ticket artifact is readable, unless `--accept-missing-tickets --reason`; the acceptance reason is logged. Tested by `test_done_refuses_tickets_without_a_ticket_artifact`.
+- [x] **R2** `sdlc_plan.py:2810-2905` — `ticket --status passed` bypassed the blocked→passed guard — `cmd_ticket` now refuses a blocked gate set to passed. Tested by `test_ticket_refuses_a_blocked_gate_passed`.
+- [x] **R4** `sdlc_plan.py:2810-2905` — `ticket --status open` silently cleared decided metadata and allowed an out-of-order ledger — reopening a decided gate now needs `--reason`; a ticket gate cannot reopen while a later gate is decided; a phase gate cannot reopen while its phase is done/skipped; `set` uses the same guard. Tested by `test_reopening_a_decided_gate_needs_a_reason_and_order` and `test_set_reopening_a_decided_gate_needs_a_reason`.
+- [x] **R5** `sdlc_plan.py:1075-1090,2278-2330` — `set` accepted a dotted ticket id and wrote a phantom ticket — `set` now rejects `tickets.<dotted-id>...` and points at the `ticket` command. Tested by `test_set_rejects_a_dotted_ticket_id`.
+- [x] **R3** `SKILL.md:106` — the headless projection sentence named the wrong omitted fields — corrected to “the per-level counts and ticket detail”; SKILL.md stays at the 2,500-token budget.
+- [x] **R10** `ledger-schema.md:266` — the replaceable-map list named nodes `set` rejects — corrected to the replaceable nodes and fixed the `tickets` example; added the reopen and dotted-id rules.
+- [x] **R6** `tests/test_sdlc_plan.py` — no test covered the write-path gaps — five tests added (99 total).
+- [x] **R7** `evals/cases.json` `feature-one-session` — the block-reason assertion conflated bmad-build with the immediate bmad-spec blocker — assertion now accepts the missing skill of the next action.
+- [x] **R8** `evals/cases.json` `fix-trivial` — the `open_gates`/`verify.trace` assertion was ambiguous — assertion now checks that no open gate is required.
+- [x] **R9** `evals/cases.json`, `evals/README.md` — installed-BMAD ready path, write loop, and resume-at-open-gate remain unverified — **deferred**: the stock runner stages individual files only; documented in `evals/README.md` Known limitations (V8/V9).
+
+Verification after the fixes:
+
+- **99/99** unittest cases pass (738 s).
+- `package.sh --check` reports the module copy in sync.
+- `quick_validate`, `prepass-workflow-integrity`, `scan-path-standards`, and `scan-scripts` are clean; SKILL.md is 2,500 tokens.
+- The quality eval grades remain 10/10 cases and 62/62 expectations; the two corrected rubrics (R7, R8) still pass against the existing transcripts.
+

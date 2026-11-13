@@ -201,13 +201,16 @@ uv run --no-cache {skill-root}/scripts/sdlc_plan.py set --plan <ledger> \
 uv run --no-cache {skill-root}/scripts/sdlc_plan.py set --plan <ledger> \
   --workstream ws-001 --path artifacts.prd --value _bmad-output/prd-checkout/prd-checkout.md
 uv run --no-cache {skill-root}/scripts/sdlc_plan.py set --plan <ledger> \
-  --workstream ws-001 --path tickets --null --replace --reason "reset ticket map"
+  --workstream ws-001 --path "tickets.1-3-ticket-menu" --null --replace \
+  --reason "remove the withdrawn ticket"
 
 # set rejects derived state (phases.<phase>.gate, gates.*.level) and whole-node
 # writes without --replace --reason. --root is for document paths only;
-# --workstream is for workstream fields. --reason is only for an override or skip.
-# A decided gate's override_reason and decided_at cannot be cleared, a blocked
-# gate cannot be set passed, and only one phase may be active at a time.
+# --workstream is for workstream fields. --reason is only for an override, a
+# skip, or a reopen. A decided gate's override_reason and decided_at cannot be
+# cleared, a blocked gate cannot be set passed, reopening a decided gate needs
+# --reason, and only one phase may be active at a time. Ticket ids containing
+# '.' are written with the ticket command, not set.
 # Pausing clears active_workstream; resume with --workstream <id> --path status
 # --value active so a new session has an unambiguous target.
 
@@ -233,7 +236,8 @@ uv run --no-cache {skill-root}/scripts/sdlc_plan.py ticket --plan <ledger> \
 # is intentional, add --accept-missing-evidence or --accept-missing-tickets
 # together with --reason.
 uv run --no-cache {skill-root}/scripts/sdlc_plan.py done --plan <ledger> \
-  --workstream ws-001 --memlog {workflow.memlog_path}
+  --workstream ws-001 --project-root {project-root} \
+  --memlog {workflow.memlog_path}
 
 # Materialize gate levels and a tickets map on an older ledger
 uv run --no-cache {skill-root}/scripts/sdlc_plan.py migrate --plan <ledger>
@@ -263,7 +267,7 @@ uv run --no-cache {skill-root}/scripts/sdlc_plan.py log --plan <ledger> \
 uv run --no-cache {skill-root}/scripts/sdlc_plan.py validate --plan <ledger>
 ```
 
-`set` parses `--value` as JSON when possible, otherwise as a string. Use `--null` to set null. Omitting `--workstream` targets the active workstream for workstream-shaped paths; document paths (`schema`, `bmad.*`, `active_workstream`, `workstreams.*`) stay at the root. Replacing a whole map (`tickets`, `gates.<phase>`, `phases`, `artifacts`, a ticket gate node) needs `--replace --reason`. `decisions` and `phases.*.evidence` are append-only through `append`.
+`set` parses `--value` as JSON when possible, otherwise as a string. Use `--null` to set null. Omitting `--workstream` targets the active workstream for workstream-shaped paths; document paths (`schema`, `bmad.*`, `active_workstream`, `workstreams.*`) stay at the root. Replacing a whole node (`phases.<phase>`, `tickets.<id>`, a gate node, or a ticket gate node) needs `--replace --reason`. `decisions` and `phases.*.evidence` are append-only through `append`.
 
 If `uv` is unavailable, read and write the YAML directly with the same shape, keep the writes atomic, and take a sibling `.lock` file around the read-modify-write. The script is a convenience, not a hard dependency.
 

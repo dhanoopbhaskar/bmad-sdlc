@@ -103,7 +103,7 @@ When `{workflow.ask_at_every_gate}` is false or the user says "headless":
 - Model `unknown` → record it and block skill-dependent actions. Known signals → create/add the workstream and emit the next action.
 - Missing `next_action.skill` → `status: blocked`, name the install step, keep the action id.
 - `summary` returns the full shape; read `phase`, `next_action`, `optional_actions`.
-- Emit one JSON block: `{status, model, track, size, phase, ledger, memlog, next_action, optional_actions, open_gates, blocked_gates, locked_phases, assumptions}`. `assumptions` is always an array. This block projects `summary` (it omits the open lists and ticket detail).
+- Emit one JSON block: `{status, model, track, size, phase, ledger, memlog, next_action, optional_actions, open_gates, blocked_gates, locked_phases, assumptions}`. `assumptions` is always an array. This block projects `summary`; it omits the per-level counts and ticket detail.
 
 ## Ledger and audit
 

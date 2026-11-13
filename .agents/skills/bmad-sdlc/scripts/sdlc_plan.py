@@ -2317,6 +2317,13 @@ def _validate_path(path: str) -> None:
             fail(f"unknown ticket path: {path}")
         if "gates" in parts:
             index = parts.index("gates")
+            if index > 2:
+                # Dotted ids are legal as ticket keys, but `get_parent` splits
+                # them into separate map levels, so `set` cannot address them.
+                fail(
+                    "ticket ids containing '.' must be edited with the ticket "
+                    f"command: --id <id> --gate <gate>, not set --path {path}"
+                )
             if index + 1 >= len(parts) or parts[index + 1] not in TICKET_GATES:
                 fail(f"unknown ticket gate in path: {path}")
             if len(parts) > index + 3 or (
@@ -2483,6 +2490,51 @@ def _guard_ticket_order(workstream: dict, path: str, value) -> None:
         fail("build.review cannot be decided before build.ticket")
 
 
+def _guard_reopen(root: dict, path: str, value, reason: str | None) -> None:
+    """A decided gate may reopen, but only explicitly and never out of order."""
+    written = _written_gate(path, value)
+    if not written:
+        return
+    kind, reference, gate_name, status = written
+    if status != "open":
+        return
+    if kind == "phase":
+        node = ((root.get("gates") or {}).get(reference) or {}).get(gate_name)
+    else:
+        ticket = (root.get("tickets") or {}).get(reference) or {}
+        node = (ticket.get("gates") or {}).get(gate_name)
+    current = (
+        str(node.get("status") or "open") if isinstance(node, dict) else "open"
+    )
+    if current not in ("passed", "overridden", "skipped"):
+        return
+    if not str(reason or "").strip():
+        fail("reopening a decided gate needs --reason")
+    if kind == "phase":
+        phase = (root.get("phases") or {}).get(reference) or {}
+        if isinstance(phase, dict) and phase.get("status") in ("done", "skipped"):
+            fail(
+                f"cannot reopen {reference}.{gate_name} while phase "
+                f"{reference} is {phase.get('status')}; reopen the phase first"
+            )
+        return
+    order = list(TICKET_GATES)
+    later = order[order.index(gate_name) + 1 :]
+    ticket = (root.get("tickets") or {}).get(reference) or {}
+    gates = ticket.get("gates") or {}
+    decided = [
+        name
+        for name in later
+        if isinstance(gates.get(name), dict)
+        and gates[name].get("status") in ("passed", "overridden", "skipped")
+    ]
+    if decided:
+        fail(
+            f"cannot reopen build.{gate_name} while later gates are decided: "
+            + ", ".join(decided)
+        )
+
+
 def _node_at(root: dict, path: str) -> dict | None:
     """The mapping that holds the final path segment."""
     node: object = root
@@ -2632,16 +2684,20 @@ def cmd_set(args: argparse.Namespace) -> None:
         fail("gate writes need a workstream; omit --root")
     if (
         written is not None
-        and written[3] not in ("overridden", "skipped")
+        and written[3] not in ("overridden", "skipped", "open")
         and args.reason
         and not args.replace
     ):
-        fail("--reason applies to an override or skip, not a passed or open gate")
+        fail(
+            "--reason applies to an override, a skip, or a reopen, "
+            "not a passed gate"
+        )
     if scope_id is not None:
         _guard_phase_status(root, args.path, value, args.reason, model)
         _guard_active_phase(root, args.path, value)
         _guard_decided_metadata(root, args.path, value)
         _guard_blocked_gate(root, args.path, value)
+        _guard_reopen(root, args.path, value, args.reason)
         _guard_ticket_order(root, args.path, value)
     parent, key = get_parent(root, args.path)
     node_write = written is not None and _gate_status_target(args.path) is None
@@ -2673,9 +2729,11 @@ def cmd_set(args: argparse.Namespace) -> None:
             # A --reason on a node replacement belongs to --replace, not to
             # the gate. Keep a reason already present on the new node.
             stored.setdefault("override_reason", None)
-        elif args.reason:
+        elif args.reason and status != "open":
             stored["override_reason"] = args.reason
         else:
+            # An open gate has no decision, so it carries no override reason.
+            # A reopen reason lives in the audit trail, not on the gate.
             stored["override_reason"] = None
         if status is not None:
             stored["decided_at"] = None if status == "open" else now_iso()
@@ -2853,8 +2911,11 @@ def cmd_ticket(args: argparse.Namespace) -> None:
         for gate_name in TICKET_GATES
     }
     level = level_map.get(args.gate, "optional")
-    if args.status not in ("overridden", "skipped") and args.reason:
-        fail("--reason applies to an override or skip, not a passed or open gate")
+    if args.status not in ("overridden", "skipped", "open") and args.reason:
+        fail(
+            "--reason applies to an override, a skip, or a reopen, "
+            "not a passed gate"
+        )
     needs_reason = args.status in ("overridden", "skipped") and level in (
         "required",
         "conditional",
@@ -2884,9 +2945,22 @@ def cmd_ticket(args: argparse.Namespace) -> None:
             and statuses["ticket"] not in ("passed", "overridden")
         ):
             fail("build.review cannot be decided before build.ticket")
+    if args.status == "passed" and str(node.get("status") or "open") == "blocked":
+        fail(
+            "a blocked gate cannot be passed; resolve its evidence or "
+            "override it with --reason"
+        )
+    _guard_reopen(
+        workstream,
+        f"tickets.{args.id}.gates.{args.gate}.status",
+        args.status,
+        args.reason,
+    )
     node["status"] = args.status
     node["decided_at"] = None if args.status == "open" else now_iso()
-    if args.reason:
+    if args.status == "open":
+        node["override_reason"] = None
+    elif args.reason:
         node["override_reason"] = args.reason
     elif args.status != "overridden":
         node["override_reason"] = None
@@ -3035,21 +3109,42 @@ def cmd_done(args: argparse.Namespace) -> None:
     if missing_evidence and not str(args.reason or "").strip():
         fail("--accept-missing-evidence needs --reason")
 
+    ledger_tickets = set(tickets)
+    if track == "audit":
+        # The synthetic audit ticket is not a BMAD artifact, so it must never
+        # count as overlay drift. reconcile already exempts it.
+        ledger_tickets.discard("audit")
     artifact_tickets = (
         artifact_ticket_ids(project_root, resolve_paths(project_root))
         if project_root is not None
         else None
     )
+    accept_missing_tickets = bool(
+        getattr(args, "accept_missing_tickets", False)
+    )
+    if ledger_tickets and project_root is None:
+        fail(
+            "cannot mark the workstream done; pass --project-root to verify "
+            "ledger tickets: " + ", ".join(sorted(ledger_tickets))
+        )
+    if ledger_tickets and artifact_tickets is None:
+        # No readable ticket artifact means the overlay cannot be checked.
+        # Treat that as a gap, not as a silent pass.
+        if not accept_missing_tickets:
+            fail(
+                "cannot mark the workstream done; no readable ticket artifact "
+                "(tickets.toml or sprint-status.yaml) to verify ledger tickets: "
+                + ", ".join(sorted(ledger_tickets))
+                + "; pass --accept-missing-tickets --reason to accept the gap"
+            )
+        if not str(args.reason or "").strip():
+            fail("--accept-missing-tickets needs --reason")
     stale_tickets = (
-        sorted(set(tickets) - artifact_tickets)
+        sorted(ledger_tickets - artifact_tickets)
         if artifact_tickets is not None
         else []
     )
-    # The synthetic audit ticket is not a BMAD artifact, so it must never
-    # count as overlay drift. reconcile already exempts it.
-    if track == "audit":
-        stale_tickets = [ticket for ticket in stale_tickets if ticket != "audit"]
-    if stale_tickets and not getattr(args, "accept_missing_tickets", False):
+    if stale_tickets and not accept_missing_tickets:
         fail(
             "cannot mark the workstream done; ledger tickets not found in "
             "BMAD artifacts: " + ", ".join(stale_tickets)
@@ -3069,11 +3164,10 @@ def cmd_done(args: argparse.Namespace) -> None:
     data["updated"] = stamp
     save_plan(path, data)
     memlog_path = resolve_memlog(data, args, path)
-    memlog = append_memlog(
-        memlog_path,
-        "event",
-        f"workstream {workstream_id} marked done",
-    )
+    close_note = f"workstream {workstream_id} marked done"
+    if str(args.reason or "").strip():
+        close_note += f" (reason: {args.reason})"
+    memlog = append_memlog(memlog_path, "event", close_note)
     emit(
         {
             "ok": True,

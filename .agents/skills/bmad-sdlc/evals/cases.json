@@ -40,7 +40,7 @@
       "The JSON includes ledger, memlog, phase, and an assumptions array.",
       "next_action.action is build.ticket.",
       "next_action is not a plan, UX, architecture, sprint, or trace action.",
-      "open_gates and locked_phases do not require plan.requirements, plan.stories, plan.sprint, verify.trace, UX, or architecture.",
+      "No open gate is required: open_gates may list optional gates such as verify.trace, but none of plan.requirements, plan.stories, plan.sprint, UX, or architecture is required or blocking.",
       "The response does not claim code was written or tests passed."
     ],
     "state_prefix": null,
@@ -135,7 +135,7 @@
     "input": "Run headless. Use bmad-sdlc. Add SSO to the existing app. Workstream: sso. Track: feature. Size: one-session. Work only in the project root; do not inspect parent directories.",
     "rubric": [
       "The final JSON block reports track='feature' and size='one-session'.",
-      "The JSON status is blocked because bmad-build is missing.",
+      "The JSON status is blocked, and the block reason names the missing BMAD skill for the next action (bmad-spec or bmad-build).",
       "The JSON includes ledger, memlog, phase, and an assumptions array.",
       "next_action.action is frame.spec or build.ticket, not plan.stories or plan.sprint.",
       "No locked_phases entry names plan.stories, plan.sprint, plan.ux, or plan.architecture.",
