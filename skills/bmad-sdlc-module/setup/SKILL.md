@@ -26,6 +26,7 @@ Install the conductor into a project's skills directory and register its module 
      */skills/bmad-sdlc) ;;
      *) echo "refusing to replace $target" >&2; exit 1 ;;
    esac
+   mkdir -p "$(dirname "$target")"
    if [[ -e "$target" ]]; then
      mv "$target" "$target.bak-$(date +%Y%m%d%H%M%S)"
    fi
@@ -52,7 +53,7 @@ Install the conductor into a project's skills directory and register its module 
    uv run --no-cache "{project-root}/<skills-dir>/bmad-sdlc/scripts/sdlc_plan.py" \
      init --project-root "{project-root}" --name "<project-name>" --track <track> --size <size>
    ```
-   Ask for the track and size, defaulting to `feature` and `epic`. A `fix` or `audit` defaults to size `one-session`. On an existing ledger the same command appends a workstream and pauses the previously active one. If `_bmad/custom/bmad-sdlc.toml` (team) or `_bmad/custom/bmad-sdlc.user.toml` (personal) sets `ledger_path` or `memlog_path`, run `_bmad/scripts/resolve_customization.py` and pass the resolved `--plan` and `--memlog`; the command's defaults mirror the shipped `customize.toml`, not the override. Add `_bmad-output/sdlc/*.lock` to the target project's `.gitignore`; the helper leaves its lock files beside the ledger.
+   Ask for the track and size, defaulting to `feature` and `one-session`. A `fix` or `audit` defaults to size `one-session`. On an existing ledger the same command appends a workstream and pauses the previously active one. If `_bmad/custom/bmad-sdlc.toml` (team) or `_bmad/custom/bmad-sdlc.user.toml` (personal) sets `ledger_path` or `memlog_path`, run `_bmad/scripts/resolve_customization.py` and pass the resolved `--plan` and `--memlog`; the command's defaults mirror the shipped `customize.toml`, not the override. Add `_bmad-output/sdlc/*.lock` and `_bmad-output/sdlc/.tmp/` to the target project's `.gitignore`; the helper leaves its lock files beside the ledger and the conductor uses `.tmp/` for scratch.
 
 7. **Confirm.** Report:
    - skill path and installed version (`<skills-dir>/bmad-sdlc/VERSION` against `{module-root}/module.yaml`)

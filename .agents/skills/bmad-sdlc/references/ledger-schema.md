@@ -178,8 +178,8 @@ Every operation prints JSON. Mutating operations are atomic and take a file lock
 | `phase`, `next_phase` | The recommended phase; equals `next_action.phase` when there is one. |
 | `next_action` | `{phase, gate, action, skill, skill_installed?, ticket?, reason, source}` or null when paused/done. `skill_installed` appears only when `summary` is given `--project-root`. |
 | `optional_actions` | Open optional actions the user may take now. |
-| `open_gates`, `blocked_gates` | Every open/blocked gate, including gates in a phase marked `done`/`skipped`. |
-| `required_open`, `conditional_open`, `optional_open` | The same gates split by resolved level. |
+| `open_gates`, `blocked_gates` | Every live open/blocked gate, per-ticket gates included. A phase marked `done`/`skipped` contributes only the gates that contradict its status; `phases[].open_gates` lists every open gate in that phase, decided or not. |
+| `required_open`, `conditional_open`, `optional_open` | The same live gates split by resolved level. `optional_open` holds only open optional gates; a blocked optional gate appears in `blocked_gates`. |
 | `locked_phases` | Phases not yet reachable, with the first missing gate. |
 | `phases[].complete` | True when `gate-matrix.md` §Phase completion says the phase is complete. |
 | `tickets` | Per-ticket gate state (`count`, `open`, `blocked`, `required_open`, `conditional_open`, `items`). |
@@ -291,7 +291,7 @@ uv run --no-cache {skill-root}/scripts/sdlc_plan.py validate --plan <ledger>
 
 ### Hand-edit fallback
 
-If `uv` is unavailable, read and write the YAML directly with the same shape, keep the writes atomic, and take a sibling `.lock` file around the read-modify-write. The script is a convenience, not a hard dependency.
+If `uv` is unavailable, read and write the YAML directly with the same shape, keep the writes atomic, and take a sibling `.lock` file around the read-modify-write. Apply §Field rules by hand: an override or reasoned skip carries `override_reason`, a decided gate carries `decided_at`, `decisions` stays append-only, and a level still follows the resolved track/size/model. Log the hand edit to the audit trail, re-read the file, and present no gate from an unvalidated ledger. Never hand-write a derived field (`phases.*.gate`, `gates.*.level`) or a BMAD ticket status. The script is a convenience, not a hard dependency; these rules are the dependency.
 
 ## Resume semantics
 

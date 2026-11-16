@@ -34,8 +34,9 @@ default_track = "feature"
 
 # Used only when the size cannot be detected. One of:
 # trivial | one-session | epic | project
+# Prefer the smaller size and promote later (phase-map.md §Sizing).
 # A fix or audit defaults to one-session regardless of this value.
-default_size = "epic"
+default_size = "one-session"
 
 # When false, activation runs headless: no questions, no menu, emit a JSON
 # report and stop at the next gate. Irreversible actions still require consent.

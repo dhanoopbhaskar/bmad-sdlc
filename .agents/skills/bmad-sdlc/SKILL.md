@@ -1,6 +1,6 @@
 ---
 name: bmad-sdlc
-description: 'Conducts the BMAD delivery lifecycle from one durable plan. Use when user says "start a new product with BMAD", "continue the SDLC", "where are we in the delivery lifecycle", "run the whole BMAD flow", or "audit our tests end to end".'
+description: 'Conducts the BMAD delivery lifecycle from one durable plan. Use when user says "start a new product with BMAD", "continue the SDLC", "where are we in the delivery lifecycle", "run the whole BMAD flow", "audit our tests end to end", or wants one skill to run PRD, architecture, build, and tests.'
 ---
 
 # BMAD SDLC Conductor
@@ -23,12 +23,12 @@ It coordinates BMAD skills rather than replacing them: it routes, validates the 
 When `{workflow.ask_at_every_gate}` is false or the user says "headless":
 
 - **Stop at the next gate; never auto-approve.** Log an override only with a supplied reason.
-- `status` is `ready` (`next_action` actionable), `blocked` (missing skill or blocked gate), `needs_input` (unknown name/track/size, no ledger for a status-only request, or paused), or `done` (closed).
-- Default track and size only when no signal exists (`fix`/`audit` → `one-session`). An unknown name → `status: needs_input`, stop without writing; an unknown track/size takes the configured default. Track is `greenfield|feature|fix|audit`; size is `trivial|one-session|epic|project`.
+- `status` is `ready` (`next_action` actionable), `blocked` (missing skill or blocked gate), `needs_input` (unknown name, no ledger for a status-only request, or paused), or `done` (closed).
+- Default track and size only when no signal exists (`fix`/`audit` → `one-session`; otherwise the configured default). An unknown name → `status: needs_input`, stop without writing; an unspecified track/size takes the configured default. Track is `greenfield|feature|fix|audit`; size is `trivial|one-session|epic|project`.
 - Model `unknown` → record it and block skill-dependent actions. Known signals → create/add the workstream and emit the next action.
 - Missing `next_action.skill` → `status: blocked`, name the install step, keep the action id. `close.mark_done` and `<phase>.unblock` are conductor actions with no skill; they are not blocked for that reason.
 - `summary` returns the full field set in `references/ledger-schema.md`; read `phase`, `next_action`, `optional_actions`.
-- Emit one JSON block: `{status, model, track, size, phase, ledger, memlog, next_action, optional_actions, open_gates, blocked_gates, locked_phases, assumptions}`. `assumptions` is always an array. `track` and `size` come from `summary.workstream` when a workstream is active, otherwise from the top-level `summary.track`/`summary.size` after close. The block projects `summary`, omitting per-level counts and ticket detail.
+- Emit one JSON block: `{status, model, track, size, phase, ledger, memlog, next_action, optional_actions, open_gates, blocked_gates, locked_phases, assumptions}`. `assumptions` is always an array. `track` and `size` come from `summary.workstream` when a workstream is active, otherwise from the top-level `summary.track`/`summary.size` after close. Copy `next_action`, `optional_actions`, `open_gates`, `blocked_gates`, and `locked_phases` verbatim from `summary`; never filter, reorder, or drop a gate. Omit only the per-level counts and ticket detail.
 
 ## On Activation
 
@@ -101,7 +101,7 @@ A fresh session with a ledger is normal: follow `references/ledger-schema.md` §
 
 ## Ledger and audit
 
-- Use `scripts/sdlc_plan.py` for reads and writes; pass `--plan`. A command that returns `ok: false` exits non-zero, so `validate && …` is safe; read the JSON for the reason. If `uv` is unavailable, edit the YAML with the same shape.
+- Use `scripts/sdlc_plan.py` for reads and writes; pass `--plan`. A command that returns `ok: false` exits non-zero, so `validate && …` is safe; read the JSON for the reason. If `uv` is unavailable, edit the YAML with the same shape, apply the shape rules in `references/ledger-schema.md` by hand, log the hand edit, and do not present a gate from an unvalidated file.
 - Every write logs to the audit trail; `--memlog` overrides the path recorded at `init`. Use `resize` for track/size; `set` rejects those fields.
 - Close semantics and the phase-status cache rule: `references/gate-matrix.md` §Phase completion.
 
@@ -116,9 +116,9 @@ A fresh session with a ledger is normal: follow `references/ledger-schema.md` §
 - **Never edit installer-managed `{project-root}/_bmad/_config/` files.**
 - **Capture, don't interrupt.** Log out-of-scope requests as `captured: <request>`, echo them at the next gate, and act only when scheduled.
 - **Never read eval metadata.** `case.json`, `prompt.txt`, a rubric, and the skill's own `evals/` directory are harness files, not project inputs; ignore them even above the project root.
-- **No silent success.** Report an artifact missing, a success claim without a file, or a skill absent.
+- **No silent success.** Report an artifact missing, a success claim without a file, or a skill absent; name any scratch file you leave behind.
 - **No scope invention.** Do not add features, tickets, or gates not asked for.
-- **Stay inside the project root.** Never write, copy, or probe files outside `{project-root}`.
+- **Stay inside the project root.** Never write, copy, or probe files outside `{project-root}`. Scratch output goes in a `.tmp/` directory beside `{workflow.ledger_path}` and is not a deliverable.
 - **Keep the plan portable.** Prefer `{project-root}`-relative paths.
 
 ## References

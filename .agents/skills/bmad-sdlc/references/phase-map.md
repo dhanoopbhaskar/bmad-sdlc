@@ -106,7 +106,7 @@ The unit is **one ticket per Build session**. The conductor picks ready tickets 
 | `build.atdd` | test-architect | `bmad-testarch-atdd` | `bmad-tea` | — |
 | `build.ticket` | developer | `bmad-build` | `bmad-build` | `build.ticket` |
 | `build.auto` | developer | `bmad-build-auto` | `bmad-build-auto` | `build.ticket` |
-| `build.loop` | developer | `bmad-loop` | `bmad-loop` | `build.ticket` |
+| `build.loop` | developer | `bmad-build-auto` | `bmad-build-auto` | `build.ticket` |
 | `build.tests` | developer | project test runner or `bmad-build` | same | `build.tests` |
 | `build.review` | quality | `bmad-code-review` or `bmad-build`'s built-in review | same | `build.review` |
 | `build.done` | product-owner | `bmad-sprint-planning` status update, or user | `bmad-agent-po` ("mark story done") | `build.done` |
@@ -117,6 +117,8 @@ Ready-ticket sources:
 - Current: the active initiative's `tickets/tickets.toml` and the per-ticket build plan status (`built` → `done`).
 
 `bmad-build` already reviews its own work. `build.review` is satisfied by that built-in review when it ran and its findings were triaged; run `bmad-code-review` as a separate pass when the change is risky, the built-in review was skipped, or the user asks. Record which one satisfied the gate.
+
+`build.loop` (batches) resolves to `bmad-build-auto`: `bmad-loop` is an orchestrator tool installed as a separate package, not a skill, so never name it as one.
 
 ## Verify phase
 

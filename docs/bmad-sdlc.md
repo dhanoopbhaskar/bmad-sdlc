@@ -63,6 +63,7 @@ Decisions made with the user on 2026-11-12. Each is binding for this build unles
 | D23 | Design doc location | **`docs/` + `_bmad-output/sdlc/`.** |
 | D24 | Review passes (2026-11-12) | **Gate state is authoritative, levels are derived.** See `docs/bmad-sdlc-build.memlog.md` for the corrections from the review passes. |
 | D25 | Module and concurrency | **Module ships as `skills/bmad-sdlc-module/` with `module-help.csv`; the ledger supports one active workstream at a time.** |
+| D26 | `bmad-loop` mapping (2026-11-16 review) | **Never name it as a skill.** `bmad-loop` is an orchestrator package, not an installed skill; `build.loop` resolves to `bmad-build-auto` and is offered only for batches the user asks for. |
 
 ## 5. What BMAD actually says (grounding)
 
@@ -120,4 +121,4 @@ The annotated repository tree is in `README.md` §Repository layout; the contrac
 
 Open questions (deferred, not blocking):
 
-- Should `bmad-loop` be offered automatically for batches of ready tickets, or only on request?
+- None. The `bmad-loop` question is closed by D26.

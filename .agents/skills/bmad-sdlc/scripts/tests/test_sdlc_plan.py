@@ -625,6 +625,36 @@ class LedgerTests(unittest.TestCase):
         self.assertIn("close.retro", optional)
         self.assertIn("close.walkthrough", optional)
 
+    def test_optional_actions_skip_locked_phases(self) -> None:
+        self.init_track("fix", "trivial")
+        summary = run("summary", "--plan", str(self.ledger))
+        locked = {item["phase"] for item in summary["locked_phases"]}
+        offered = {item["phase"] for item in summary["optional_actions"]}
+        self.assertFalse(offered & locked, (offered, locked))
+        self.assertEqual(summary["optional_actions"], [])
+
+        for gate in ("ticket", "review", "done"):
+            payload = run(
+                "ticket",
+                "--plan",
+                str(self.ledger),
+                "--id",
+                "T1",
+                "--gate",
+                gate,
+                "--status",
+                "passed",
+            )
+            self.assertTrue(payload["ok"], payload)
+        summary = run("summary", "--plan", str(self.ledger))
+        locked = {item["phase"] for item in summary["locked_phases"]}
+        offered = {item["phase"] for item in summary["optional_actions"]}
+        self.assertFalse(offered & locked, (offered, locked))
+        self.assertIn(
+            "close.retro",
+            [action["action"] for action in summary["optional_actions"]],
+        )
+
     def test_override_requires_reason(self) -> None:
         self.init()
         refused = run(

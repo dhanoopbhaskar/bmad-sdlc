@@ -1400,24 +1400,38 @@ def phase_blocking(entries: list[dict]) -> list[dict]:
 def optional_actions(
     workstream: dict, track: str, size: str, model: str
 ) -> list[dict]:
-    """Open optional gates, offered but never required to advance."""
+    """Open optional gates in reachable phases, offered but never required.
+
+    A phase behind an undecided required/conditional gate is locked, and an
+    action in it is not takeable yet, so it must not appear here.
+    """
     phases = workstream.get("phases") or {}
     actions: list[dict] = []
     seen: set[tuple[str, str | None]] = set()
+    locked = False
     for phase in PHASES:
         node = phases.get(phase) or {}
-        if node.get("status") in ("done", "skipped"):
+        status = node.get("status", "pending")
+        entries = phase_gate_entries(workstream, phase, track, size, model)
+        if status not in ("done", "skipped") and not locked:
+            for entry in entries:
+                if entry["status"] != "open" or entry["level"] != "optional":
+                    continue
+                action = action_for_gate(entry["id"], track, size, model)
+                key = (action["action"], action.get("ticket"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                action["reason"] = f"{entry['id']} is optional."
+                actions.append(action)
+        if status in ("done", "skipped"):
             continue
-        for entry in phase_gate_entries(workstream, phase, track, size, model):
-            if entry["status"] != "open" or entry["level"] != "optional":
-                continue
-            action = action_for_gate(entry["id"], track, size, model)
-            key = (action["action"], action.get("ticket"))
-            if key in seen:
-                continue
-            seen.add(key)
-            action["reason"] = f"{entry['id']} is optional."
-            actions.append(action)
+        # Mirror summary's locked_phases rule so the menu and the lock list
+        # cannot disagree.
+        if phase_blocking(entries) or (
+            phase == "build" and not (workstream.get("tickets") or {})
+        ):
+            locked = True
     return actions
 
 
@@ -1579,7 +1593,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     elif track in ("fix", "audit"):
         size = "one-session"
     else:
-        size = args.default_size or "epic"
+        size = args.default_size or "one-session"
     detection = detect_document(project_root)
     if detection.get("config_errors"):
         fail(
