@@ -1,0 +1,451 @@
+[
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2565-2573,2696-2704",
+    "trigger_condition": "_guard_blocked_gate reads only _gate_status_target, so a whole-node gate replacement with status=passed is never checked.",
+    "guard_snippet": "Drive _guard_blocked_gate from _written_gate(path, value) and resolve the current node for both scalar and node writes, as _guard_reopen already does.",
+    "potential_consequence": "A gate blocked on missing evidence is recorded passed through the documented --replace form, with validate clean and override_reason null."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2317-2334",
+    "trigger_condition": "The dotted-ticket-id rejection is inside the `if \"gates\" in parts` branch, so tickets.<dotted-id>.<field> and whole-node paths still reach get_parent and create a phantom nested ticket.",
+    "guard_snippet": "Reject a dotted id for every tickets.<id>... path, not only gate paths; compare the id prefix against the exact keys in the ticket map.",
+    "potential_consequence": "set exits 0; validate then errors 'tickets.1.gates must be a mapping', and only a hand edit repairs it."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3112-3146",
+    "trigger_condition": "done refuses when ledger_tickets is non-empty and project_root is None before the accept-missing-tickets branch, so a custom-ledger close cannot use the documented escape hatch.",
+    "guard_snippet": "Compute artifact_tickets as None when project_root is None, then guard once on `ledger_tickets and artifact_tickets is None` with --accept-missing-tickets --reason; mention --project-root only as a hint.",
+    "potential_consequence": "A workstream whose ledger is not at the default path can never close, and the refusal text hides the documented escape."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2493-2535,2945-2958",
+    "trigger_condition": "_guard_reopen checks later ticket gates but never the workstream state, so a ticket gate can reopen after the workstream is done.",
+    "guard_snippet": "Refuse a reopen when workstream.status == 'done' (or reopen the workstream/phase in the same write), mirroring the phase check.",
+    "potential_consequence": "ticket returns ok, validate then reports 'done with undecided gates', and summary leaves next_action null."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2499-2510,2730-2737,2961-2966",
+    "trigger_condition": "_guard_reopen keys on status == 'open' only, so a decided gate can be demoted to blocked with no reason; override_reason is cleared and decided_at is stamped.",
+    "guard_snippet": "Treat every transition out of passed|overridden|skipped as a reopen requiring --reason, and set decided_at only for a decided status.",
+    "potential_consequence": "An audited override reason is erased with no reason or reopen record, and the gate becomes unpassable without an override."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2403-2411,2703-2739",
+    "trigger_condition": "A gate-node replacement without a status is accepted; _validate_value only checks status when the replacement happens to contain one.",
+    "guard_snippet": "Require isinstance(value, dict) with status in GATE_STATUSES for every gate-node write, and route the node through the scalar guards before writing.",
+    "potential_consequence": "set reports success, the decided gate disappears, and validate then rejects the ledger."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/references/ledger-schema.md:203-205",
+    "trigger_condition": "The new removal example writes a null node with --null --replace instead of deleting the key.",
+    "guard_snippet": "Support deletion explicitly (set --delete, or ticket --delete --id), or document a working removal and add a test that validate is clean and the id is gone from summary.",
+    "potential_consequence": "Following the reference produces 'tickets.<id> must be a mapping' and a ticket that can never be closed."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3028-3032; SKILL.md:17; references/ledger-schema.md:238-240",
+    "trigger_condition": "done resolves --project-root raw; only --plan, --memlog, and --template go through expand_project_root, while SKILL.md:17 says the script expands {project-root}.",
+    "guard_snippet": "Expand --project-root in every command that takes it, or scope the SKILL sentence to the flags that do and substitute at the call site.",
+    "potential_consequence": "A conductor copying the documented line sees a false missing-evidence/ticket-artifact gap and may waive it."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2493-2535,2576",
+    "trigger_condition": "Reopening a decided phase (done/skipped -> active) needs no reason and logs none, while the gate guard's error tells the agent to do exactly that.",
+    "guard_snippet": "Require --reason for a decided phase reopen and record it in the memlog; add the verb to the menu and gate-matrix.",
+    "potential_consequence": "The documented remediation for a blocked gate reopen reverses a done phase without an audit reason."
+  },
+  {
+    "lens": "adversarial",
+    "location": "references/menu.md; SKILL.md:84; references/gate-matrix.md",
+    "trigger_condition": "No menu verb, loop step, or gate-matrix subsection covers reopening a gate or phase; the rule exists only in a ledger-schema comment.",
+    "guard_snippet": "Add a reopen row to menu.md and a 'Reopening' subsection to gate-matrix.md with the legal sequence and the later-gate/phase constraints.",
+    "potential_consequence": "An agent that hits 'reopening a decided gate needs --reason' has no documented verb and will hand-edit the YAML or invent an invalid sequence."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3028-3032",
+    "trigger_condition": "done does not check that --project-root is a directory, unlike detect/init at 1435 and 1443.",
+    "guard_snippet": "Validate project_root.is_dir() and fail with the searched roots before the artifact checks.",
+    "potential_consequence": "A typo is indistinguishable from genuinely missing evidence and invites an unnecessary acceptance waiver."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3164-3170",
+    "trigger_condition": "The close note records the reason but never names the accepted gap or the stale tickets; both accept flags produce the same line.",
+    "guard_snippet": "Append the accepted missing_evidence or stale_tickets list before the reason in close_note.",
+    "potential_consequence": "A post-hoc reader cannot tell what was waived at close, which is the question the accept flags exist to answer."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3142-3146",
+    "trigger_condition": "A hand-edited ledger mixes integer and string ticket ids; done subtracts and sorts the two types together.",
+    "guard_snippet": "Normalize ledger_tickets = {str(t) for t in tickets} before the set math, the sort, and the join.",
+    "potential_consequence": "done raises a TypeError on a legal hand-edited ledger and the workstream cannot close."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2317-2334",
+    "trigger_condition": "set writes tickets.<dotted-id>.<field> when the path has no gates segment.",
+    "guard_snippet": "Reject dotted ticket ids for every path under tickets, not only the gate-path branch.",
+    "potential_consequence": "set exits 0; validate rejects the phantom ticket and only a hand edit repairs it."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2493-2535",
+    "trigger_condition": "A ticket gate reopens after the workstream was closed with done.",
+    "guard_snippet": "Refuse when root.status == 'done' before the phase/ticket branches, or reopen the workstream in the same write.",
+    "potential_consequence": "The command returns ok; validate then rejects the done workstream as undecided."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2565-2573",
+    "trigger_condition": "set replaces a blocked gate node with status passed via --replace.",
+    "guard_snippet": "Gate on _written_gate(path, value)[3] == 'passed' and resolve the current node for scalar and node forms.",
+    "potential_consequence": "The blocked gate is recorded passed with no override reason and validate stays clean."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2732-2737,2961-2966",
+    "trigger_condition": "A decided gate is set to blocked; no command treats blocked as a decision change.",
+    "guard_snippet": "Treat blocked like open in _guard_reopen and keep the existing override_reason when no --reason is supplied.",
+    "potential_consequence": "An audited override reason is erased without a reason or reopen record."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/references/ledger-schema.md:203-205",
+    "trigger_condition": "The new example removes a ticket by writing a null key.",
+    "guard_snippet": "Make set --path tickets.<id> --null --replace delete the key, or replace the example with a supported removal.",
+    "potential_consequence": "set returns ok, validate fails, and migrate does not repair the null ticket key."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2513-2520",
+    "trigger_condition": "_guard_reopen's phase branch is never executed: no test writes a gates.<phase>.<gate> status to open.",
+    "guard_snippet": "Add a phase variant to test_set_reopening_a_decided_gate_needs_a_reason: pass the plan gates, set phases.plan done, assert reopening gates.plan.requirements fails with 'reopen the phase first', then run validate.",
+    "potential_consequence": "The branch can regress or be deleted as dead code while the suite stays green, and a phase gate reopens under a done phase.",
+    "gap_shape": "regression-gap",
+    "consumer": "set --path gates.<phase>.<gate>.status --value open, the only command that reopens a phase gate (ledger-schema.md:203-212).",
+    "evidence": "grep of test_sdlc_plan.py for '\"open\"' returns 406, 752, 1803, 1818, 1835, 1842, 1869, 1882; all are ticket paths. A scratch run confirmed the guard fires and that validate would reject the ledger if it did not."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2565-2573",
+    "trigger_condition": "The blocked->passed guard is only tested through .status writes; no test performs a node replacement.",
+    "guard_snippet": "Block tickets.T1.gates.review, then assert set --path tickets.T1.gates.review --value '{\"status\":\"passed\"}' --replace --reason probe fails with 'a blocked gate cannot be passed'; repeat for a phase gate.",
+    "potential_consequence": "The guard can be bypassed through the documented node-replacement form with validate clean; the ticket's grant of --reason is lost.",
+    "gap_shape": "missing-adoption-gap",
+    "consumer": "set --path tickets.<id>.gates.<gate> / gates.<phase>.<gate> whole-node replacement, documented at ledger-schema.md:266-267.",
+    "evidence": "A scratch repro returned ok:true and summary status passed with override_reason null. Both existing blocked->passed tests (test_sdlc_plan.py:2249-2274 and 1734-1774) use the .status path; grep for 'blocked gate cannot be passed' returns only those two assertions."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3167-3170",
+    "trigger_condition": "The done memlog test asserts only the substring 'marked done', which passes with or without the new reason suffix.",
+    "guard_snippet": "Assert 'marked done (reason: memlog path fixture)' in the memlog test, and assert the reason in the accepted branch of test_done_refuses_tickets_without_a_ticket_artifact.",
+    "potential_consequence": "Deleting the close-note reason leaves the suite green, so the audit claim in the r2 review and fix-progress ships unverified.",
+    "gap_shape": "broken-verification-gap",
+    "consumer": "close.mark_done -> done --accept-missing-tickets --reason, advertised at sdlc_plan.py:3135-3138 and ledger-schema.md:233-239.",
+    "evidence": "A scratch run emitted 'workstream ws-001 marked done (reason: ledger-only fixture)'. The only assertion on that line is test_sdlc_plan.py:1945 assertIn('marked done', ...); test_done_refuses_tickets_without_a_ticket_artifact asserts only accepted['ok']."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2318-2326",
+    "trigger_condition": "The dotted-id guard is untested for paths without a gates segment, which is exactly where it is missing.",
+    "guard_snippet": "Extend test_set_rejects_a_dotted_ticket_id with set --path tickets.1.3.note --value phantom --replace --reason probe -> ok:false with the ticket-command message.",
+    "potential_consequence": "The corruption R5 was meant to end is still reachable, and the suite reports success.",
+    "gap_shape": "missing-adoption-gap",
+    "consumer": "set --path tickets.<dotted-id>.<field> and the whole-node form, the same surface as the documented ticket example at ledger-schema.md:203-205.",
+    "evidence": "A scratch run returned ok:true and then validate reported 'tickets.1.gates must be a mapping'. The only dotted-id test (test_sdlc_plan.py:1888-1902) uses tickets.1.3.gates.review.status."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2732-2737",
+    "trigger_condition": "The set reopen test never inspects the node; the ticket twin asserts override_reason is cleared, so only the set half is unpinned.",
+    "guard_snippet": "After the accepted set reopen, assert summary tickets.items.T1.gates.ticket.override_reason is None, mirroring test_sdlc_plan.py:1843, and add the phase variant.",
+    "potential_consequence": "A reopen reason written onto an open gate is later read as an override reason, so a required gate can be overridden without a supplied reason.",
+    "gap_shape": "regression-gap",
+    "consumer": "set --path tickets.<id>.gates.<gate>.status --value open --reason, then a later override write on the same node.",
+    "evidence": "test_set_reopening_a_decided_gate_needs_a_reason (test_sdlc_plan.py:1845-1886) ends at assertTrue(accepted['ok']); the ticket test asserts override_reason at 1843."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/tests/test_sdlc_plan.py:277-294",
+    "trigger_condition": "test_migrate_materializes_levels_and_tickets clears the map with set --path tickets --null --replace, which the script rejects; the test ignores the result.",
+    "guard_snippet": "Replace the set call with self.edit_ledger(\"del data['workstreams']['ws-001']['tickets']\") as the round-2 pass did at line 887, and assert the rebuilt map.",
+    "potential_consequence": "The test named for migrate's ticket materialization runs against an intact map, so a regression that stops creating the map ships green.",
+    "gap_shape": "broken-verification-gap",
+    "consumer": "sdlc_plan.py migrate on an older ledger with no workstreams.<id>.tickets map, documented at ledger-schema.md:243-245.",
+    "evidence": "A scratch run of the exact setup call returned ok:false, 'unknown ticket path: tickets'. The test asserts only migrated['ok'], validate['ok'], and warnings == [], none of which distinguishes an empty map from a preserved one."
+  },
+  {
+    "lens": "structure",
+    "pass": "CUT",
+    "location": "SKILL.md §On Activation step 5",
+    "original_text": "Model-write and --force sentences belong to step 4, Guardrails, and ledger-schema.",
+    "revised_text": "Cut the model-write and --force sentences; keep the append/pause rule and the corrupt-ledger pointer.",
+    "changes": "~46 words removed from the section read at every activation."
+  },
+  {
+    "lens": "structure",
+    "pass": "MERGE",
+    "location": "SKILL.md §Ledger and audit, bullets 1 and 3",
+    "original_text": "Restates ledger-schema.md:3 and :5 in the section that loads it.",
+    "revised_text": "Keep only --memlog overrides the recorded path, resize for track/size, and the §Phase completion pointer.",
+    "changes": "~50 words removed."
+  },
+  {
+    "lens": "structure",
+    "pass": "MERGE",
+    "location": "Audit rule in five places",
+    "original_text": "gate-matrix.md:31, ledger-schema.md:7 and :160, phase-map.md:86, SKILL.md:90 state four different subsets.",
+    "revised_text": "Make gate-matrix own the levels and ledger-schema own the synthetic ticket's gate states.",
+    "changes": "~45 words removed; one rule, one owner."
+  },
+  {
+    "lens": "structure",
+    "pass": "CUT",
+    "location": "gate-matrix.md §Phase completion, last two sentences",
+    "original_text": "Restates SKILL.md:66 and points through ledger-schema back to SKILL.md.",
+    "revised_text": "Drop both sentences; SKILL.md step 6 owns the reconcile report and its handling.",
+    "changes": "~30 words removed."
+  },
+  {
+    "lens": "structure",
+    "pass": "MOVE",
+    "location": "gate-matrix.md §Gate interaction and menu.md §After an action",
+    "original_text": "The two pointers form a loop; neither page holds both the choice names and the ledger effects.",
+    "revised_text": "Keep the four outcomes and their effects in gate-matrix; menu presents them without a back-pointer.",
+    "changes": "~10 words and one hop at the decision point."
+  },
+  {
+    "lens": "structure",
+    "pass": "MERGE",
+    "location": "version-adapters.md §Skill mapping",
+    "original_text": "Eight rows repeat phase-map's per-action v6 and Current-model columns and have drifted.",
+    "revised_text": "Keep only rows with no per-action home and point at phase-map's columns.",
+    "changes": "~40 words and one drift site removed."
+  },
+  {
+    "lens": "structure",
+    "pass": "MOVE",
+    "location": "SKILL.md §Headless",
+    "original_text": "The mode contract sits after the activation and loop it overrides.",
+    "revised_text": "Move it directly after §Resolution rules, before §On Activation.",
+    "changes": "Word-neutral; prevents an activation step from asking."
+  },
+  {
+    "lens": "structure",
+    "pass": "MOVE",
+    "location": "SKILL.md §Headless bullet order",
+    "original_text": "The status enum is defined after its first use.",
+    "revised_text": "Move the status-definition bullet ahead of the defaulting bullet.",
+    "changes": "Word-neutral."
+  },
+  {
+    "lens": "structure",
+    "pass": "MERGE",
+    "location": "SKILL.md §Tracks and sizing",
+    "original_text": "Restates phase-map after naming it as the source.",
+    "revised_text": "Keep the override rule and the gate-level consequence; let phase-map carry paths and defaults.",
+    "changes": "~25 words removed."
+  },
+  {
+    "lens": "structure",
+    "pass": "MOVE",
+    "location": "gate-matrix.md §Override rules, Levels are derived",
+    "original_text": "A schema rule, duplicated at ledger-schema.md:150, inside the override section.",
+    "revised_text": "Move it to ledger-schema §Field rules.",
+    "changes": "~28 words removed."
+  },
+  {
+    "lens": "structure",
+    "pass": "CONDENSE",
+    "location": "ledger-schema.md §Script operations",
+    "original_text": "1,003 words under one heading; set rules split between fence comments and the paragraph.",
+    "revised_text": "Split into §Summary shape, §Commands, §set rules, §Hand-edit fallback.",
+    "changes": "~12 words removed; set guidance becomes findable."
+  },
+  {
+    "lens": "structure",
+    "pass": "ADD",
+    "location": "ledger-schema.md §Field rules",
+    "original_text": "Omits workstreams.<id>.track/.size/.status/.current_phase and their writing command.",
+    "revised_text": "Add four rows with allowed values and the command, or rename the heading to gate and decision rules.",
+    "changes": "~30 words added; the rule index becomes complete."
+  },
+  {
+    "lens": "structure",
+    "pass": "ADD",
+    "location": "ledger-schema.md",
+    "original_text": "Longest reference, cited by section from three files, but has no Contents list.",
+    "revised_text": "Add a Contents list mirroring phase-map's.",
+    "changes": "~8 words added."
+  },
+  {
+    "lens": "structure",
+    "pass": "CUT",
+    "location": "phase-map.md:5",
+    "original_text": "The tables below summarize the resolver now points at no level column.",
+    "revised_text": "Cut that sentence.",
+    "changes": "~8 words removed."
+  },
+  {
+    "lens": "structure",
+    "pass": "MERGE",
+    "location": "evals/README.md §Run",
+    "original_text": "The note that decides which command to run arrives after both command blocks.",
+    "revised_text": "Fold the baseline-vs-quality guidance into the preamble above the commands.",
+    "changes": "~25 words removed."
+  },
+  {
+    "lens": "structure",
+    "pass": "CUT",
+    "location": "evals/README.md §Case state, bullets 3 and 5",
+    "original_text": "The same runner path limitation is stated twice, three bullets apart.",
+    "revised_text": "Cut bullet 5 and fold its positive half into bullet 3.",
+    "changes": "~22 words removed."
+  },
+  {
+    "lens": "structure",
+    "pass": "MOVE",
+    "location": "handoff-protocol.md §Fallback prompts",
+    "original_text": "Rung 3's prompt sits after the return contract and checklist.",
+    "revised_text": "Move it to follow §Brief template so the ladder's payloads sit together.",
+    "changes": "Word-neutral; removes three sections of reading before the prompt."
+  },
+  {
+    "lens": "structure",
+    "pass": "MERGE",
+    "location": "SKILL.md §Roles",
+    "original_text": "A 13-word section holding a subset of phase-map §Role labels.",
+    "revised_text": "Merge into §The loop step 2 as a clause pointing at phase-map.",
+    "changes": "~25 words including the heading."
+  },
+  {
+    "lens": "prose",
+    "location": "references/ledger-schema.md:160",
+    "original_text": "unless the user accepts the gap with `--reason`",
+    "revised_text": "Use done to close a workstream. It refuses while any required or conditional gate is open or blocked, including per-ticket gates and a missing audit review. It also refuses a missing artifact, a decided gate with no artifact or phase evidence, a blocked phase, or a ledger ticket absent from the BMAD artifacts, unless the user accepts the gap with `--reason` plus `--accept-missing-evidence` or `--accept-missing-tickets`.",
+    "changes": "Factual: --reason alone does not accept a gap; the script also demands one of the two accept flags. This is the round-1 P3 fix not fully applied."
+  },
+  {
+    "lens": "prose",
+    "location": "SKILL.md:44",
+    "original_text": "A user answer goes to `init --model`; a silent detector must not overwrite it.",
+    "revised_text": "A user answer goes to `init --model` on first creation and `set --path bmad.model` on an existing ledger; a silent detector must not overwrite it.",
+    "changes": "Factual: init appends a workstream and pauses the active one, so the current sentence contradicts step 5 and version-adapters.md:31 on a resume."
+  },
+  {
+    "lens": "prose",
+    "location": "SKILL.md:102",
+    "original_text": "ready when next_action is actionable, blocked when a required skill or gate blocks, needs_input when name/track/size is unknown, no ledger exists for a status-only request, or the workstream is paused, done when closed",
+    "revised_text": "ready when next_action is actionable; blocked when a required skill is missing or a gate is blocked; needs_input when name/track/size is unknown, no ledger exists for a status-only request, or the workstream is paused; done when closed",
+    "changes": "Semicolons and code-formatted values delimit the enum; currently 'done when closed' reads as another needs_input case."
+  },
+  {
+    "lens": "prose",
+    "location": "SKILL.md:66",
+    "original_text": "Set those gates/phases to `blocked` and report the expected path.",
+    "revised_text": "Set the gates in `gates_to_block` and the phases in `missing_evidence`/`phases_to_block` to `blocked`, and report the expected path.",
+    "changes": "'those gates/phases' has no antecedent; the previous sentence names four lists, two of them gates."
+  },
+  {
+    "lens": "prose",
+    "location": "references/handoff-protocol.md:70",
+    "original_text": "at least one artifact is claimed, it exists on disk, is non-empty, and is inside {project-root}, and",
+    "revised_text": "at least one artifact is claimed and exists on disk, is non-empty, and is inside {project-root}, and",
+    "changes": "The comma made 'claimed, it exists' read as two requirements rather than one acceptance condition."
+  },
+  {
+    "lens": "prose",
+    "location": "references/handoff-protocol.md:18",
+    "original_text": "if the harness supports loading a skill by name, name it, otherwise the path is enough.",
+    "revised_text": "if the harness supports loading a skill by name, name the skill; otherwise the path is enough.",
+    "changes": "'name it' could mean the skill or the path, and the bare comma made otherwise a third item."
+  },
+  {
+    "lens": "prose",
+    "location": "references/handoff-protocol.md:129",
+    "original_text": "The conductor asks once.",
+    "revised_text": "The conductor asks once, before launching them together.",
+    "changes": "'asks once' has no object: the user is being asked to approve running two actions in parallel."
+  },
+  {
+    "lens": "prose",
+    "location": "references/gate-matrix.md:31",
+    "original_text": "every `plan.*` gate resolves `optional`",
+    "revised_text": "every `plan.*` gate resolves to `optional`",
+    "changes": "Missing 'to' after transitive 'resolves'; without it the clause reads as naming a level rather than resolving to one."
+  },
+  {
+    "lens": "prose",
+    "location": "references/phase-map.md:48",
+    "original_text": "This table adds the persona name and the unit each role advances.",
+    "revised_text": "This table adds the persona name and what each role owns.",
+    "changes": "'the unit each role advances' does not describe the Owns column, whose cells are artifacts and activities."
+  },
+  {
+    "lens": "prose",
+    "location": "references/phase-map.md:87",
+    "original_text": "Conditional gates are not locked out",
+    "revised_text": "Conditional gates are available early",
+    "changes": "'locked' already means something specific here (locked_phases), so 'not locked out' reads as a phase-lock claim."
+  },
+  {
+    "lens": "prose",
+    "location": "references/menu.md:96",
+    "original_text": "Show `blocked` gates with the missing path, `missing_evidence`/`phases_to_block`, and `ambiguous_pointers` (several files match one artifact key) from `reconcile`.",
+    "revised_text": "Show `blocked` gates with the missing path, and show `reconcile`'s `missing_evidence`, `phases_to_block`, and `ambiguous_pointers` (several files match one artifact key).",
+    "changes": "One list joins a display instruction to three field names, and 'from reconcile' trails only the last."
+  },
+  {
+    "lens": "prose",
+    "location": "references/menu.md:90",
+    "original_text": "Save and exit; the ledger is already written.",
+    "revised_text": "Exit; every write is already recorded.",
+    "changes": "'Save and exit' promises a save step the same line then denies."
+  },
+  {
+    "lens": "prose",
+    "location": "evals/README.md:40-41",
+    "original_text": "`baseline` already runs the skill and bare configs, so a separate quality run is only needed when you want the skill-only transcripts on their own.",
+    "revised_text": "`baseline` runs both configs; add the `quality` run only when you want the skill-only transcripts on their own.",
+    "changes": "Placed after both command blocks, the note withdraws the first command without saying so."
+  },
+  {
+    "lens": "prose",
+    "location": "evals/README.md:69",
+    "original_text": "do not tune the description from them until that branch exists.",
+    "revised_text": "do not tune the description from them until a runner can parse opencode events.",
+    "changes": "'that branch' has no antecedent; the preceding sentence names a runtime and a parser."
+  },
+  {
+    "lens": "prose",
+    "location": "SKILL.md:12",
+    "original_text": "BMAD artifacts are truth for ticket/story status; the ledger is an overlay.",
+    "revised_text": "BMAD artifacts are the source of truth for ticket/story status; the ledger is an overlay.",
+    "changes": "The same rule reads 'the source of truth' in ledger-schema.md:5; 'are truth' is a clipped form found only here."
+  },
+  {
+    "lens": "prose",
+    "location": "SKILL.md:105",
+    "original_text": "`summary` returns the full shape; read `phase`, `next_action`, `optional_actions`.",
+    "revised_text": "`summary` returns the full field set documented in `references/ledger-schema.md`; read `phase`, `next_action`, `optional_actions`.",
+    "changes": "'the full shape' names a structure defined in another file and introduced nowhere in SKILL.md."
+  },
+  {
+    "lens": "prose",
+    "location": "customize.toml:5",
+    "original_text": "#   Override files (not edited here):",
+    "revised_text": "#   Override files live in the project, not in this file:",
+    "changes": "'not edited here' can be read as forbidding edits to the override files themselves, which are exactly what a team edits."
+  }
+]

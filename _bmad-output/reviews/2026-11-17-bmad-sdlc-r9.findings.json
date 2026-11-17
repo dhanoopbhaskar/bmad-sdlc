@@ -1,0 +1,639 @@
+[
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:590-606",
+    "trigger_condition": "`resolve_memlog` resolves a recorded relative `bmad.memlog` against `ledger.parent` when the ledger is not in the default `_bmad-output/sdlc/` layout, although `init` now records that path project-root-relative (1710-1716) and every command may pass `--project-root`.",
+    "guard_snippet": "root = Path(expand_project_root(getattr(args, \"project_root\", None) or \".\", Path.cwd())).resolve()\nresolved = (root / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()\n# keep _default_project_root(ledger) only as a fallback when no root is known",
+    "potential_consequence": "With `--plan docs/sdlc/plan.yaml`, `set`/`ticket`/`done`/`log`/a second `init` append audit lines to a bogus `<ledger.dir>/docs/sdlc/.memlog.md` (reproduced: `init` then `set --project-root .` created `docs/sdlc/docs/sdlc/.memlog.md`), splitting the audit trail from the committed ledger and making the recorded path diverge permanently.",
+    "lens": "adversarial"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4171-4180",
+    "trigger_condition": "`cmd_migrate` walks every workstream without the done/paused refusal every other mutator has (`set` 3241, `ticket` 3661, `done` 3836, `resize` 4842), so it rewrites gates and phases on a closed or paused workstream.",
+    "guard_snippet": "for workstream_id, workstream in workstreams.items():\n    if str(workstream.get(\"status\") or \"active\") in (\"done\", \"paused\"):\n        fail(f\"workstream {workstream_id} is {workstream['status']}; reopen it before migrate\")\n# and run the validate checks before save_plan so migrate cannot emit ok:true for an invalid ledger",
+    "potential_consequence": "Reproduced: on a closed feature/epic ledger, deleting one required gate then `migrate --reason repair` recreated it open and exited 0 while leaving `workstream is done with undecided gates: plan.stories` — `validate` then fails on the file migrate just blessed.",
+    "lens": "adversarial"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4540-4572",
+    "trigger_condition": "`reconcile --write` auto-blocks open gates and pending/active phases in every workstream, including paused and done ones, which the ledger rules say refuse writes.",
+    "guard_snippet": "if write and str(workstream.get(\"status\") or \"active\") != \"active\":\n    skipped_workstreams.append(workstream_id)  # report drift, do not mutate\n    continue",
+    "potential_consequence": "Reproduced on a paused workstream: `reconcile --write` flipped `verify.trace` from open to blocked, saved the ledger and logged `reconcile applied: ...`, so a pause can be mutated without the documented resume-with-reason step (and a closed workstream's records can be rewritten).",
+    "lens": "adversarial"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3733-3738",
+    "trigger_condition": "`ticket --evidence` (and `set --path tickets.<id>.gates.<gate>.evidence`, 2720-2728) stores the pointer without the project-root containment check that artifact pointers get at `set` (3227-3240), although ledger-schema.md:164 says ticket evidence is inside the root.",
+    "guard_snippet": "root = _resolve_root(args)\ncandidate = Path(expand_project_root(str(args.evidence), root))\ncandidate = candidate if candidate.is_absolute() else root / candidate\ntry:\n    candidate.resolve().relative_to(root.resolve())\nexcept ValueError:\n    fail(\"ticket gate evidence must stay inside the project root\")",
+    "potential_consequence": "Reproduced: `ticket --id 1 --gate ticket --status passed --evidence /etc/hosts` returns ok:true and `validate` reports no error, so the ledger can cite evidence that lives outside the project and only `done` notices — where `--accept-missing-evidence` then waives it.",
+    "lens": "adversarial"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2898-2945",
+    "trigger_condition": "`_guard_ticket_node` blocks dropping a decided gate and clearing its `override_reason`, but not dropping that gate's `evidence`, which `done` (3996-4020) treats as the artifact that decided it.",
+    "guard_snippet": "if isinstance(old_node, dict) and old_node.get(\"evidence\") and not new_node.get(\"evidence\"):\n    fail(f\"cannot drop evidence on {synthetic}; keep it or reopen the gate first\")",
+    "potential_consequence": "Reproduced: `set --path tickets.1 --replace` with gates that omit `evidence` erased the pointer on a passed `ticket` gate with exit 0 and only a `replaced tickets.1` audit line, leaving a closed gate with no artifact pointer and nothing to detect it — the phase-evidence equivalent is protected at 3359-3377.",
+    "lens": "adversarial"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2663-2728",
+    "trigger_condition": "The `_gate_node_target` branch of `_validate_value` returns after checking `status`/`level`, so a ticket gate-node replacement never reaches the `evidence` string check that applies to the scalar `...evidence` path.",
+    "guard_snippet": "if gate_node:\n    if isinstance(value, dict) and \"evidence\" in value:\n        pointer = value[\"evidence\"]\n        if not isinstance(pointer, str) or not pointer.strip():\n            fail(\"ticket gate evidence must be a non-empty path string\")\n    ...",
+    "potential_consequence": "Reproduced: `set --path tickets.1.gates.review --replace --value '{\"status\":\"passed\",\"evidence\":123}'` writes `evidence: 123`, `validate` is clean, and `done` later resolves `Path(\"123\")` as an unreadable pointer; the same field rejects a dict when written one level deeper.",
+    "lens": "adversarial"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:220-245",
+    "trigger_condition": "`SKILL_ALTERNATIVES` is keyed only by skill name, so `summary` substitutes the first *installed* name from an alias list without knowing which gate or capability asked for it.",
+    "guard_snippet": "SKILL_ALTERNATIVES_BY_GATE = {\"plan.stories\": (\"bmad-create-epics-and-stories\", \"bmad-sprint-planning\", \"bmad-agent-po\"), ...}\ndef skill_alternatives(gate: str, skill: str, installed: set[str]) -> list[str]:\n    candidates = SKILL_ALTERNATIVES_BY_GATE.get(gate) or SKILL_ALTERNATIVES.get(skill, ())",
+    "potential_consequence": "Reproduced with a current-model install lacking `bmad-agent-po` but having `bmad-spec` plus `bmad-create-epics-and-stories`: the `plan.stories` gate is reported with `skill: \"bmad-spec\"`, `skill_installed: true`, so the conductor hands a stories gate to the spec writer and never uses the installed stories skill.",
+    "lens": "adversarial"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2426-2432",
+    "trigger_condition": "`skill_manifest_only` is computed from `requested`, not from the alternative that replaced it, so a manifest-only alternative is reported as a healthy install.",
+    "guard_snippet": "next_action[\"skill_manifest_only\"] = bool(chosen and chosen in manifest_only)\nif chosen != requested and requested:\n    next_action[\"skill_requested\"] = requested",
+    "potential_consequence": "Reproduced with `bmad-agent-pm` present only in `skill-manifest.csv`: `next_action` came back `skill: \"bmad-agent-pm\", skill_installed: true, skill_manifest_only: false`, so the broken-install warning version-adapters.md:29 promises never fires and the handoff is attempted against a skill with no `SKILL.md`.",
+    "lens": "adversarial"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:1614-1619",
+    "trigger_condition": "The project-root containment check added to `init` exists only there: `--memlog` on any other command (581-589) and a `set --path bmad --replace` memlog (3296-3310) are only checked for inequality with the ledger.",
+    "guard_snippet": "# in resolve_memlog and the bmad replacement:\ntry:\n    resolved.relative_to(root_resolved)\nexcept ValueError:\n    fail(f\"the audit trail must resolve inside the project root: {resolved}\")",
+    "potential_consequence": "Reproduced: `log --memlog <outside>/trail.md` and `set --path bmad --replace --value '{\"model\":\"v6\",\"memlog\":\"<outside>/trail2.md\"}'` both exit 0; the ledger then records an absolute machine-specific path outside `{project-root}` and every later write appends there, defeating both the portability fix and the stay-inside-the-root guardrail.",
+    "lens": "adversarial"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2620-2625",
+    "trigger_condition": "`_validate_path` lets `append` address `override_reason`/`decided_at`, and `cmd_append` (3616-3635) creates a list where the field is null, so gate metadata can be written in the wrong shape and pre-seeded reasons satisfy the override checks (3433-3442, 3722-3732).",
+    "guard_snippet": "if parts[0] in (\"gates\", \"tickets\") and parts[-1] in (\"status\", \"decided_at\", \"override_reason\"):\n    fail(\"gate metadata is written by set/ticket, not append\")\n# and in set/ticket: reason = str(args.reason or \"\").strip()  (never stored values)",
+    "potential_consequence": "Reproduced: `append --path gates.plan.requirements.override_reason --value \"planted reason\"` then `set --path gates.plan.requirements.status --value skipped` with no `--reason` exits 0, stores `override_reason: \"['planted reason']\"`, and the audit line carries no reason; the ticket variant passes the same check, then clears the field, leaving `skipped without an override_reason` that validate rejects.",
+    "lens": "adversarial"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4093-4100",
+    "trigger_condition": "`done` sets only the close phase terminal, leaving every other phase at `active`/`pending` in a workstream it marks `done`, and `validate` (2146-2160) only checks gates for a closed workstream.",
+    "guard_snippet": "for phase in PHASES:\n    node = (workstream.get(\"phases\") or {}).get(phase) or {}\n    if phase != \"close\" and node.get(\"status\") in (\"active\", \"pending\"):\n        node[\"status\"] = \"done\"  # or refuse close until phases are terminal",
+    "potential_consequence": "Reproduced: after `done` on a trivial fix the ledger has `phases.build.status: active` with `workstream.status: done`, `validate` is clean, and `summary --workstream ws-001` reports `phase: build` with build active on a closed workstream — a state `set` could no longer produce without reopening.",
+    "lens": "adversarial"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3378-3412",
+    "trigger_condition": "Whole-node replacements write `decided_at` straight from the payload (ticket replacement 2906-2934 does the same), and `validate` never requires `decided_at` on a decided gate.",
+    "guard_snippet": "# in cmd_set/_guard_ticket_node:\nif old_node.get(\"status\") in (\"passed\", \"overridden\", \"skipped\"):\n    new_node.setdefault(\"decided_at\", old_node.get(\"decided_at\"))\n# in validate: error when a decided gate has no decided_at",
+    "potential_consequence": "Reproduced: `set --path tickets.1 --replace` with `{\"status\":\"passed\",\"decided_at\":null}` (or a forged timestamp) is accepted and `validate` reports ok, so the ledger's decision history can be backdated or erased while the audit trail still shows a single `replaced` line.",
+    "lens": "adversarial"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3509-3535",
+    "trigger_condition": "The `bmad.model` write path runs `apply_levels` over every workstream, including done and paused ones, and only asks for `--reason` instead of requiring the documented workstream reopen.",
+    "guard_snippet": "for workstream_id, workstream in (data.get(\"workstreams\") or {}).items():\n    if str(workstream.get(\"status\") or \"active\") in (\"done\", \"paused\"):\n        fail(f\"workstream {workstream_id} is {workstream['status']}; reopen it before changing the model\")\n# then: fail if apply_levels reports any status->pending unless the workstream was reopened in this call",
+    "potential_consequence": "Reproduced on a closed feature/epic ledger: `set --path bmad.model --value v6 --reason upgrade` exits 0, reopens `phases.plan` to active and leaves `validate` failing with `is done with undecided gates: plan.sprint` — a done workstream accepted a gate/phase write and became invalid.",
+    "lens": "adversarial"
+  },
+  {
+    "location": "skills/bmad-sdlc-module/setup/SKILL.md:51-57",
+    "trigger_condition": "Step 6 tells the installer to resolve `ledger_path`/`memlog_path` from customization and pass them, but the shown `init` command has no `--plan`/`--memlog` flags.",
+    "guard_snippet": "init --project-root \"{project-root}\" --plan \"<resolved ledger_path>\" --memlog \"<resolved memlog_path>\" \\\n  --name \"<project-name>\" --track <track> --size <size> --default-track <default-track> --default-size <default-size>",
+    "potential_consequence": "A project whose `customize.toml` override points the ledger anywhere other than `_bmad-output/sdlc/plan.yaml` gets a ledger at the built-in default while the installed skill resolves the override path, so activation reports no ledger and a second empty plan is created.",
+    "lens": "adversarial"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2645-2647",
+    "trigger_condition": "`_validate_path` permits `project`, `created`, and `updated` (and `current_phase`) but `_validate_value` has no branch for them, so `set --root` writes any type or value into document fields.",
+    "guard_snippet": "elif path == \"project\":\n    if not isinstance(value, str) or not value.strip():\n        fail(\"project must be a non-empty string\")\nelif path in (\"created\", \"updated\"):\n    if not isinstance(value, str):\n        fail(f\"{path} must be an ISO-8601 string\")",
+    "potential_consequence": "Reproduced: `set --root --path project --value 42` exits 0 and only `validate` later rejects the ledger it wrote (`project must be a non-empty string`), so a mutating command reports success while producing a file the documented `validate && summary` chain refuses.",
+    "lens": "adversarial"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:1710-1714",
+    "trigger_condition": "Custom ledger path; a later command omits --memlog",
+    "guard_snippet": "Resolve a relative recorded memlog against the project root, not ledger.parent: `root = _default_project_root(ledger) or _resolve_root(args); resolved = (root / candidate).resolve()`",
+    "potential_consequence": "Audit trail splits into a nested path; hash checks read the wrong file",
+    "lens": "edge-case-hunter"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:1614-1619",
+    "trigger_condition": "Re-init with a recorded absolute memlog outside the project root",
+    "guard_snippet": "Re-run the containment check after line 1678 replaces memlog_path: `candidate.resolve().relative_to(root_resolved)`",
+    "potential_consequence": "Audit trail stays outside the root and keeps its absolute path",
+    "lens": "edge-case-hunter"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2720-2728",
+    "trigger_condition": "set writes evidence to a ticket gate with no status node",
+    "guard_snippet": "Require the existing gate node before accepting the leaf: `if not isinstance(gates.get(gate), dict) or not gates[gate].get(\"status\"): fail(\"create the gate with the ticket command first\")`",
+    "potential_consequence": "Status-less gate makes validate fail and blocks the next gate",
+    "lens": "edge-case-hunter"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3413-3456",
+    "trigger_condition": "set reopens a ticket gate; the stale evidence pointer survives",
+    "guard_snippet": "Mirror cmd_ticket: when `status in (\"open\", \"blocked\")` also `stored.pop(\"evidence\", None)`",
+    "potential_consequence": "done accepts the earlier decision's evidence for the new override",
+    "lens": "edge-case-hunter"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2430-2432",
+    "trigger_condition": "Missing first-choice skill; the installed alternative is manifest-only",
+    "guard_snippet": "Compute the flag from the emitted skill: `next_action[\"skill_manifest_only\"] = bool(chosen and chosen in manifest_only)`",
+    "potential_consequence": "Broken install reports skill_installed true with no repair warning",
+    "lens": "edge-case-hunter"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:220-246",
+    "trigger_condition": "Alternative picked by skill name, ignoring the gate's action",
+    "guard_snippet": "Scope the map by action: `SKILL_ALTERNATIVES[(skill, gate_id)]` before taking the first installed entry",
+    "potential_consequence": "verify.trace gets bmad-testarch-nfr; plan.stories gets bmad-spec",
+    "lens": "edge-case-hunter"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/references/handoff-protocol.md:111",
+    "trigger_condition": "Claim: verify-return without the flags first reports the ledger_sha256/memlog_sha256 to reuse",
+    "guard_snippet": "Hash after the acceptance writes: recompute `memlog_sha = sha256_of(memlog_path)` after the append_memlog calls at 4792-4804",
+    "potential_consequence": "Next handoff is falsely rejected as an audit-trail change",
+    "kind": "claim",
+    "confidence": "high",
+    "lens": "edge-case-hunter"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/references/gate-matrix.md:74",
+    "trigger_condition": "Claim: an overridden required/conditional gate carries a reason before phase completion",
+    "guard_snippet": "phase_blocking must also block `entry[\"status\"] == \"overridden\" and not entry[\"override_reason\"]`, as it does for skipped",
+    "potential_consequence": "summary reports complete and done closes on a ledger validate rejects",
+    "kind": "claim",
+    "confidence": "high",
+    "lens": "edge-case-hunter"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/evals/README.md:66",
+    "trigger_condition": "Claim: Seven of the eleven inputs say \"Work only in the project root\"",
+    "guard_snippet": "All eleven cases.json inputs carry that sentence; either say \"all eleven\" or list the seven that actually lack it",
+    "potential_consequence": "Grader misjudges four cases as guardrail-only when auditing contamination",
+    "kind": "claim",
+    "confidence": "high",
+    "lens": "edge-case-hunter"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4022-4041",
+    "trigger_condition": "Claim: done refuses a custom path without --project-root",
+    "guard_snippet": "Fail whenever `project_root is None` and the path is not the default layout, not only when evidence exists",
+    "potential_consequence": "An all-skipped custom ledger closes with no evidence resolution",
+    "kind": "claim",
+    "confidence": "medium",
+    "lens": "edge-case-hunter"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4751-4766 — `verify-return` compares fresh SHA-256 digests of the ledger and audit trail against `--expect-ledger-sha`/`--expect-memlog-sha` and appends a rejection reason on mismatch (flags at :5096-5097, digests emitted at :4825-4827).",
+    "trigger_condition": "The hash-mismatch rejection can be deleted or inverted and the whole suite still passes, because no test ever passes either `--expect-*` flag.",
+    "guard_snippet": "Beside `test_verify_return_rejects_missing_and_outside_evidence` (:5134): hash the ledger and memlog, run `self.edit_ledger('data[\"updated\"] = \"x\"')`, then `verify-return --expect-ledger-sha <pre-edit-sha> --expect-memlog-sha <pre-edit-sha>` and assert `ok is False` and `ledger changed during the handoff` in `reasons`; a second invocation with the post-edit digest must assert `ok is True` so the check is not just always-fail.",
+    "potential_consequence": "A subagent that writes `plan.yaml` or `.memlog.md` during a handoff is accepted as `ok: true`; `SKILL.md:101` and `references/handoff-protocol.md:109,118` state that outcome must reject the return, and only this comparison implements it.",
+    "gap_shape": "regression-gap",
+    "consumer": "the conductor handoff validation step in `SKILL.md:92-101` that runs `verify-return --expect-ledger-sha ... --expect-memlog-sha ...` after every subagent return, contract stated at `references/handoff-protocol.md:106-118`.",
+    "evidence": "Read all nine verify-return tests (`test_sdlc_plan.py:384` `test_verify_return_checks_status_artifacts_and_ledger`, `:871`, `:1236`, `:1548`, `:3239`, `:3312`, `:3328`, `:3952`, `:5134`) and the new `RegressionTests` block (:5300-5658); none supplies `--expect-ledger-sha`/`--expect-memlog-sha`. Repo-wide grep for `expect-ledger-sha|expect_ledger|ledger_sha256|memlog_sha256` matched only `SKILL.md:98`, `references/handoff-protocol.md:111`, `references/ledger-schema.md:277`, `scripts/sdlc_plan.py:4753/4825/5096`, and the packaged mirror — no test.",
+    "lens": "verification-gap"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3991-4013 — the new `done` check that resolves each present per-ticket gate `evidence` pointer: outside-root at :4001-4007, missing/zero-byte at :4008-4012.",
+    "trigger_condition": "Only pointer-absent and pointer-to-existing-file are tested; the outside-root and missing/zero-byte rejection branches on ticket evidence never run.",
+    "guard_snippet": "In `RegressionTests`: `ticket --id 1 --gate review --status passed --evidence missing.md`, then `done --project-root <tmp>` must fail with `build.1.review=missing.md`; repeat with `--evidence <REPO_ROOT>/README.md` expecting `(outside project root)`, and with a zero-byte file — the same three shapes already asserted for artifacts.",
+    "potential_consequence": "A workstream closes with a ticket gate whose recorded evidence does not exist or lives outside the project, while `references/gate-matrix.md:57` promises the artifact must exist; the existing close test would still pass because it only ever supplies a real `review.md`.",
+    "gap_shape": "regression-gap",
+    "consumer": "the `done` ticket-overlay evidence check at `scripts/sdlc_plan.py:3986-4021`, reached from the close step in `SKILL.md:102`.",
+    "evidence": "`test_overridden_ticket_gate_needs_evidence_at_close` (:5439-5468) checks no-pointer, then writes `review.md` before the successful close; `test_done_names_overridden_gates_in_the_close_note` (:4211-4253) also uses an existing `review.md`. Grep for `--evidence` in the test file returns only :4241 and :5457, both pointing at files the test creates, so :4001-4012 never execute. The artifact analog is covered at :4257 (`test_done_and_reconcile_reject_an_outside_root_pointer`) and :4667 (`test_done_rejects_a_directory_as_artifact_evidence`).",
+    "lens": "verification-gap"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2864-2869 (`_guard_ticket_order`) and :2920-2927 (`_guard_ticket_node`) — the changed rule that a ticket `done` needs a passed, not overridden, review on the `set` paths invoked at :3354-3355.",
+    "trigger_condition": "Only `cmd_ticket`'s inline copy of the rule (:3739-3745) is tested; reverting either `set`-path guard leaves the suite green.",
+    "guard_snippet": "Two cases beside `test_ticket_done_requires_a_passed_review` (:5426): pass `ticket`, set `review` `overridden --reason risk`, then (a) `set --path tickets.1.gates.done.status --value passed` and (b) `set --path tickets.1 --replace` with a gates map whose `done` is passed — both must exit non-zero with `passed build.review`.",
+    "potential_consequence": "A scripted or hand-driven ledger edit via `set` marks a ticket `done` on an overridden review; `done`'s ticket check (:3877-3884) then sees `done=passed` and closes, so a ticket ships with no review evidence and no deterministic test notices.",
+    "gap_shape": "regression-gap",
+    "consumer": "the `set` write path for per-ticket gate status, invoked at `scripts/sdlc_plan.py:3354-3355`; `references/gate-matrix.md:57` states the refusal applies to the script, not only to `ticket`.",
+    "evidence": "`test_ticket_done_requires_a_passed_review` (:5426-5437) drives the `ticket` command only; `test_whole_ticket_replacement_runs_the_gate_guards` (:3683-3730) reaches `_guard_ticket_node` but fails first on the blocked-gate rule, and grep of the test file finds no `tickets.*.gates.done` write through `set`. I confirmed the `set` path currently rejects the reverted case with `build.done requires a passed build.review`, so the guard is live but unasserted.",
+    "lens": "verification-gap"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2218-2234 — `summary` with no active workstream now reports the workstream with the greatest `updated` value instead of `briefs[-1]`.",
+    "trigger_condition": "No test has a scenario where the last-inserted workstream and the most-recently-updated workstream differ, so the fallback can be reverted without a failure.",
+    "guard_snippet": "Create ws-001 (`feature`/`epic`) and ws-002 (`fix`/`trivial`), switch active back to ws-001 with `set --path active_workstream --value ws-001`, close ws-001 with `done`, then assert `summary.track`/`summary.size`/`summary.phase` equal ws-001's values rather than ws-002's.",
+    "potential_consequence": "The headless block in `SKILL.md:31` (`track` and `size` come from the top-level `summary` fields after close) reports the wrong track, size, and phase after a workstream switch and close, and nothing fails.",
+    "gap_shape": "regression-gap",
+    "consumer": "the no-active-workstream branch of `summary` (`scripts/sdlc_plan.py:2215-2251`) feeding the status JSON consumed at `SKILL.md:26-31`.",
+    "evidence": "`test_summary_after_done_keeps_full_shape` (:1367-1407) and `test_pause_and_resume_track_the_active_workstream` (:2681-2708) are the only no-active-workstream assertions; both use a single workstream, where `briefs[-1]` and the max-`updated` lookup return the same record. I ran the discriminating ledger by hand: two paused workstreams with ws-001 having the later `updated` yield `feature epic plan` (ws-001), not the last-inserted ws-002, confirming the branch is live and unasserted.",
+    "lens": "verification-gap"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:220-257 (`SKILL_ALTERNATIVES` and `skill_alternatives`) applied to `next_action.skill` at :2418-2424 — specifically the test-family entries `bmad-tea` ↔ `bmad-testarch-*` and the `startswith('bmad-testarch-') and model != 'current'` branch.",
+    "trigger_condition": "Both test-family fallbacks are unreachable from any test: only the persona and code-review mappings are asserted.",
+    "guard_snippet": "Add a `summary --project-root` test for a verify action: with `bmad-agent-po` (current model) plus `bmad-testarch-trace` installed and no `bmad-tea`, drive a `fix`/`one-session` workstream to `verify.trace` and assert `next_action.skill == 'bmad-testarch-trace'` and `skill_installed is True`; mirror it with model `v6`, `bmad-tea` installed, and `next_action.skill == 'bmad-tea'`.",
+    "potential_consequence": "The new resolution silently regresses and `verify.trace`/`verify.nfr`/`verify.test_review`/`solution.*` report `skill_installed: false` even though an installed equivalent exists, so the conductor blocks with an install step (`references/version-adapters.md:71`) instead of running the action.",
+    "gap_shape": "regression-gap",
+    "consumer": "`summary`'s `next_action.skill` for the test actions resolved at `scripts/sdlc_plan.py:193-198`, consumed by the missing-skill rule in `references/version-adapters.md:59,71`.",
+    "evidence": "`test_summary_reports_an_installed_alternative_skill` (:5532-5542) asserts only `bmad-prd`→`bmad-agent-pm`; `test_build_review_accepts_bmad_build` (:5544-5556) only `bmad-code-review`→`bmad-build`. Grep for `bmad-tea`/`bmad-testarch` in the test file hits only detect tests (:4378-4390, `test_detect_reports_the_testarch_family` :5055-5060). I evaluated the live functions: `resolve_skill('bmad-testarch-trace','current')` returns `bmad-tea`, and `skill_alternatives` returns the installed counterpart in both directions, so both new branches are reachable but never asserted.",
+    "lens": "verification-gap"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2078-2104 — `validate`'s ticket-gate loop checks `status` and `override_reason` but not the new `evidence` field, whose shape `set` and `ticket` enforce at :2720-2727 and :2748-2756.",
+    "trigger_condition": "A hand-edited ledger with an empty or non-string ticket-gate `evidence` passes `validate`, so the corruption check that the conductor is told to trust does not cover the field the write paths treat as typed.",
+    "guard_snippet": "Hand-edit `tickets.T1.gates.review.evidence` to `\"  \"` (then to `7`) and assert `validate` returns `ok: False` naming `tickets.T1.gates.review.evidence`, matching the write-path message `ticket gate evidence must be a non-empty path string`.",
+    "potential_consequence": "A hand-edited or third-party ledger validates clean while carrying an evidence value the write paths reject; the conductor then presents a gate from a file it believes is validated, and `done` degrades it to a confusing missing-evidence failure instead of a validate error.",
+    "gap_shape": "missing-adoption-gap",
+    "consumer": "`validate` (`scripts/sdlc_plan.py:1818-2159`), the shape authority invoked before resuming a ledger (`SKILL.md:73`) and before presenting a gate from a hand edit (`SKILL.md:108`); `references/ledger-schema.md:172` presents the field as schema.",
+    "evidence": "`test_validate_rejects_bad_ticket_gate` (:419-441) corrupts only `status`; the validate loop at :2078-2104 has no `evidence` branch, while the new write-path validation exists at :2720-2727 and :2748-2756. Grep of the test file shows no validate case touching a ticket `evidence` value.",
+    "lens": "verification-gap"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3768-3771 — `ticket` reopen (`open`/`blocked`) now removes the gate's `evidence` when no new pointer is supplied, and :3733-3737 refuses `--evidence` on a not-decided status.",
+    "trigger_condition": "No test reopens a gate that carries evidence, so removing the pop (or the `--evidence` status guard) leaves the suite green.",
+    "guard_snippet": "Pass `review` with `--evidence review.md`, reopen it with `--status open --reason rework`, then assert the stored gate node has no `evidence` key (via `summary.tickets.items.<id>.gates.review`); separately assert `ticket --status open --evidence x` exits non-zero.",
+    "potential_consequence": "A reopened gate keeps a pointer from the superseded decision, so a later `overridden` decision entered without its own evidence still satisfies `done`'s rule at :4015-4021 and the workstream closes on an artifact nobody re-checked.",
+    "gap_shape": "regression-gap",
+    "consumer": "the `ticket` reopen path used by the `reopen` verb (`references/gate-matrix.md:65`) and the overridden-ticket evidence rule in `done` (`scripts/sdlc_plan.py:4015-4021`).",
+    "evidence": "`test_reopening_a_decided_gate_needs_a_reason_and_order` (:1903-1970) and `test_set_reopening_a_decided_gate_needs_a_reason` (:1972-2017) reopen gates that never carried evidence and assert only `status`/`override_reason`; the only `--evidence` writes (:4241, :5457) are decided-status writes. Nothing asserts the removal at :3771 or the status guard at :3736.",
+    "lens": "verification-gap"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3225-3232 — `set` now validates artifact pointers against an explicit `--project-root` instead of only inferring the root from the ledger path.",
+    "trigger_condition": "The new `--project-root` branch is never exercised for artifact pointers: the only test that passes `set --project-root` writes `phases.build.note`, and the outside-pointer test uses the default ledger layout.",
+    "guard_snippet": "Init with `--plan docs/sdlc/plan.yaml`, then `set --project-root <tmp> --plan docs/sdlc/plan.yaml --path artifacts.spec --value <REPO_ROOT>/README.md` must fail with `inside the project root`, and the same call with a project-relative existing file must succeed.",
+    "potential_consequence": "On a custom-ledger project the documented rule `Artifact pointers must resolve inside {project-root}` (`references/ledger-schema.md:300`) is not enforced at write time; the out-of-root pointer is persisted and only rejected later by `done`/`reconcile`, and no test fails.",
+    "gap_shape": "regression-gap",
+    "consumer": "the `set` artifact-pointer write path at `scripts/sdlc_plan.py:3225-3241`, documented at `references/ledger-schema.md:300`.",
+    "evidence": "`test_relative_plan_resolves_against_the_project_root` (:5579-5594) is the only `set --project-root` test and it writes `phases.build.note`, bypassing the `parts[0] == 'artifacts'` branch; `test_done_and_reconcile_reject_an_outside_root_pointer` (:4257-4290) calls `set` on the default `_bmad-output/sdlc` layout, which takes the `_default_project_root` branch at :3229. No test combines a custom ledger path with `--project-root` and an `artifacts.*` path.",
+    "lens": "verification-gap"
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/SKILL.md — whole file",
+    "original_text": "§Overview through §References — 1,703 words; measured 3,006 tiktoken tokens.",
+    "revised_text": "CONDENSE to the 2,500-token budget. The reclaim sources are: §Headless (246 words) → reference file with a 3-line trigger (−210 words / ~320 tokens); §Headless JSON enumeration → pointer (−55 words); §On Activation step 1 clause duplicated by a new guardrail (−22); §Ledger and audit hand-edit path → pointer (−30); loop steps 3–4 hash repetition (−25); step 4 model-write policy (−30); scratch-dir merge (−25); §References closing paragraph (−25).",
+    "changes": "Budget breach: the bmad-workflow-builder prepass reports 3,006 tokens against 2,500 — 506 over (20%), so the file currently fails its own harness gate. Findings 2–6 alone reclaim roughly 430 tokens and close it; without them, no further content can be added. Word impact: −350 words total from SKILL.md."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/SKILL.md §On Activation step 1 (line 42) and §Guardrails (line 124)",
+    "original_text": "Step 1: \"`_bmad/` belongs to `{project-root}`; resolve it from there, never by climbing out of `{skill-root}` (the installed skill may be a symlink).\" §Guardrails: \"**Resolve project paths from `{project-root}`.** Never build a `..` path out of `{skill-root}`; the installed skill is not a parent of `_bmad/`, and following the symlink escapes the project.\"",
+    "revised_text": "CUT the step-1 clause (leave \"On failure, read `{skill-root}/customize.toml` and use its defaults.\"); keep the guardrail, which already carries the rule and its reason.",
+    "changes": "Same rule, same wording, both added in round 8, 80 lines apart in the file that is over budget. The guardrail is the load-bearing copy because it is read as a constraint set; the activation clause is an aside. Saves ~22 words / ~35 tokens."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/SKILL.md §Guardrails (lines 123, 127) and §Ledger and audit",
+    "original_text": "\"Never modify the skill installation. … scratch output belongs in the project's `.tmp/`.\" and \"**Stay inside the project root.** Never write, copy, or probe files outside `{project-root}`. Scratch output goes in a `.tmp/` directory beside `{workflow.ledger_path}` and is not a deliverable.\"",
+    "revised_text": "MERGE the two isolation bullets into one: \"**Isolation.** `{skill-root}` may be a symlink: never chmod, write, or copy into it, and never build a `..` path out of it. Never write or probe outside `{project-root}`. Scratch goes in the `.tmp/` directory beside `{workflow.ledger_path}` and is not a deliverable.\" Keep \"name any scratch file you leave behind\" in §No silent success.",
+    "changes": "The same scratch instruction appears twice with two different directories — \"the project's `.tmp/`\" versus \"a `.tmp/` beside the ledger\", which is `_bmad-output/sdlc/.tmp/` per setup/SKILL.md step 6 and per the `.gitignore` line. Two answers to one question is a comprehension failure, not redundancy. Saves ~25 words and removes the conflict."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/SKILL.md §Headless (lines 21–31)",
+    "original_text": "When `{workflow.ask_at_every_gate}` is false or the user says \"headless\": [7 bullets, 246 words, 14% of the file]",
+    "revised_text": "MOVE to `references/headless.md`; leave a 3-line trigger in SKILL.md: the mode name, the one rule that must never be missed (\"stop at the next gate; never auto-approve; log an override only with a supplied reason\"), and the pointer. Load it at activation only when `ask_at_every_gate` is false.",
+    "changes": "Headless is a conditional mode that sits above the core flow in a file with no token room. It replaces the menu step, so it swaps one just-in-time reference for another rather than adding a load. Saves ~210 words / ~320 tokens and restores §On Activation as the first procedural section."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/SKILL.md §Headless, JSON-block bullet (line 31)",
+    "original_text": "\"Emit one JSON block: `{status, model, track, size, phase, ledger, memlog, next_action, optional_actions, open_gates, blocked_gates, locked_phases, assumptions}` … track and size come from `summary.workstream` when a workstream is active, otherwise from the top-level … Copy … verbatim from `summary`; never filter, reorder, or drop a gate. Omit only the per-level gate lists and ticket detail.\"",
+    "revised_text": "CONDENSE: \"Emit one JSON block: `summary`'s field set (`references/ledger-schema.md` §Summary shape) plus `status`, `model`, `track`, `size`, and `assumptions`; copy the summary lists verbatim — never filter, reorder, or drop a gate — and omit the per-level gate lists and ticket detail.\"",
+    "changes": "The field enumeration and the per-field rules are the §Summary shape table's job; SKILL.md spends 75 words restating it. This is the single largest remaining duplication in the file. Saves ~55 words / ~85 tokens."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/SKILL.md §Ledger and audit, bullet 1 (line 108)",
+    "original_text": "\"If `uv` is unavailable, edit the YAML with the same shape, apply the shape rules in `references/ledger-schema.md` by hand, log the hand edit, and do not present a gate from an unvalidated file.\"",
+    "revised_text": "CONDENSE: \"If `uv` is unavailable, follow `references/ledger-schema.md` §Hand-edit fallback; never present a gate from an unvalidated ledger.\"",
+    "changes": "`ledger-schema.md` §Hand-edit fallback already states the shape, the atomic write, the lock file, the field rules, and the logging step; SKILL.md re-lists them at one-third the length. Saves ~30 words / ~45 tokens."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/SKILL.md §The loop steps 3–4 (lines 92–101)",
+    "original_text": "Step 3: \"Record the ledger and audit-trail SHA-256 digests before it starts.\" Step 4: \"Hash the ledger and audit trail before the handoff and pass those hashes: …\" plus \"A hash mismatch means the handoff edited the ledger or audit trail and the return is rejected.\"",
+    "revised_text": "CUT the duplicate instruction: keep step 3's \"record the digests\", open step 4 with \"pass the recorded digests\", and drop the mismatch sentence (it is §Return contract's last bullet, and step 4 already says `ok: false` means blocked).",
+    "changes": "Adjacent steps instruct the same action, and the consequence is stated a third time in handoff-protocol.md. Saves ~25 words / ~40 tokens in the budgeted file."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/SKILL.md §On Activation step 4 (line 56)",
+    "original_text": "\"On first creation pass `--model` to `init`; on an existing ledger use `set --path bmad.model` (`--reason` to downgrade or reopen a phase). A silent detector never overwrites it.\"",
+    "revised_text": "CONDENSE to \"Write the model only when detection confirmed it or the user answered; `--reason` to downgrade or reopen a phase.\" and leave the command forms to `ledger-schema.md` §Resume semantics and `version-adapters.md` §Detection.",
+    "changes": "The model-write policy now appears in four places: this step, `version-adapters.md` line 43, `ledger-schema.md` §Resume semantics, and the `bmad.model` field-rule row. One of them is the operational instruction; the others should point. Saves ~30 words / ~45 tokens here."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/SKILL.md §Overview (line 12) and §On Activation step 5 (line 61)",
+    "original_text": "Overview: \"Track and size come from `references/phase-map.md`; state both and let the user override.\" Step 5: \"Otherwise infer the name and state the detected `track`/`size` …; ask only when signals conflict.\"",
+    "revised_text": "CUT the Overview clause; keep the operational rule in step 5 and the source pointer in §References.",
+    "changes": "The instruction \"state both, let the user override\" and \"ask only when signals conflict\" describe one behaviour in two sections; the activation step is where it acts. Saves ~14 words / ~20 tokens."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": "SKILL.md §References (lines 144); phase-map.md line 5; gate-matrix.md line 37; ledger-schema.md `gates.*.level` row; docs/bmad-sdlc.md §6 Gates row",
+    "original_text": "Five statements of the same precedence: \"summary is authoritative\", \"the Level column … `summary` wins if the stored copy disagrees\", \"**Derived** … `summary`/`done` always use the resolver\", \"`summary` is authoritative at runtime because it resolves levels from track, size, and model\", \"gate-matrix.md defines gate levels in prose; `summary` resolves track/size/model and wins at runtime.\"",
+    "revised_text": "MERGE into the SKILL.md §References paragraph as the single statement of authority (it is the precedence rule and belongs at the top level). Reduce the other four to \"levels are derived; `summary` wins\" or to a bare pointer to that paragraph.",
+    "changes": "Five paraphrases invite drift and cost the reader a comparison each time. The round-8 change added the fifth, so the cost is already recurring. Saves ~45 words across the references, 0 from SKILL.md beyond trimming its own sentence."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/references/phase-map.md §Per-track flows (lines 158–195)",
+    "original_text": "§Per-track flows sits last, after Track detection, Sizing, Role labels, five phase sections, and Advisory actions.",
+    "revised_text": "MOVE to directly after §Sizing (before §Role labels): detection → size → what the track's flow looks like → the labels and actions that fill it in.",
+    "changes": "The flows are 151 words and are the fastest answer to \"what does my track look like\", but a reader reaches them only after 1,400 words. The flows use action ids that the following tables define, so the move preserves dependency order. 0 words."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/references/phase-map.md §Plan phase, last note (line 86)",
+    "original_text": "\"**Required before conditional.** `summary`'s `next_action` recommends a required gate before a conditional one. Conditional gates are available early: `optional_actions` exposes them … The per-track flows show a natural order, not a lock.\"",
+    "revised_text": "MOVE out of the Plan-phase notes into the file intro (or a short section before §Plan phase), since it governs how `next_action` behaves in every phase, not only Plan.",
+    "changes": "A cross-phase rule is buried in a phase-local bullet list, where a reader answering a Build or Verify question will not look. 0 words saved, ~50 relocated."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": "phase-map.md §Build phase (line 119) and version-adapters.md line 63",
+    "original_text": "phase-map: \"`bmad-build` already reviews its own work. `build.review` is satisfied by that built-in review when it ran and its findings were triaged; run `bmad-code-review` as a separate pass when … Record which one satisfied the gate.\" version-adapters: \"`bmad-build`'s built-in review satisfies `build.review` when `bmad-code-review` is not installed; record which one ran.\"",
+    "revised_text": "MERGE into the phase-map build section (the gate-owner doc) and reduce the version-adapters line to a pointer, or the reverse — pick one home.",
+    "changes": "The same satisfaction rule, including the \"record which one ran\" instruction, in two references an agent may load together. Saves ~35 words and one silent-divergence surface."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/references/gate-matrix.md lines 37, 52, 59",
+    "original_text": "Line 37: \"…the conductor cannot evaluate it, so ask for a reason on every required or conditional skip.\" Line 59: \"A required or conditional gate set to `skipped` is an override and also needs a reason. The conductor cannot evaluate the `Condition` column, so it asks for the reason on every required or conditional skip instead of guessing.\" Line 52 parenthetical: \"…a required or conditional skip also needs a reason.\"",
+    "revised_text": "CUT line 37's reason clause and line 59's second sentence; keep the rule once in §Override rules and the `(skipped is a separate status …)` clarification in §Gate interaction.",
+    "changes": "The same rule and largely the same sentence three times in one file, two of them within 25 lines. Repetition does not reinforce here; it makes the reader check whether the three statements differ. Saves ~45 words."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/references/version-adapters.md §Detection, lines 34 and 43",
+    "original_text": "Line 34: \"Skills visible in the session but not installed under the project are not project installations; do not treat any of them as an installation.\" Line 43: \"Never claim a skill is available because it appears elsewhere in the session.\"",
+    "revised_text": "CUT the line-43 sentence; line 34 already states the rule and is where detection scope is established.",
+    "changes": "Two sentences, one rule, nine lines apart in the section that defines detection. Saves ~15 words."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/references/version-adapters.md line 27 (`test_style`) and line 65 (§Alias resolution)",
+    "original_text": "Line 27: \"It matches an exact `bmad-tea` directory; a fabricated `bmad-tea-<capability>` name is not an install.\" Line 65: \"…resolving a capability to `bmad-tea-trace` or any other invented `bmad-tea-*` name is a missing-skill error, not an alias.\"",
+    "revised_text": "CUT one of the two. Keep the line-65 statement, where alias resolution is being decided, and leave line 27 as \"matches an exact `bmad-tea` directory\".",
+    "changes": "Same warning about the same failure, once as detection commentary and once as an alias rule. Saves ~25 words."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/references/ledger-schema.md §Commands (lines 193–209) vs SKILL.md §On Activation steps 4, 5, 7",
+    "original_text": "§Commands repeats the `detect`, `init`, and `summary` invocations already given in SKILL.md §On Activation, each with its own flags and comments.",
+    "revised_text": "MERGE: keep the three activation invocations only in SKILL.md §On Activation (where they run in order), and in §Commands keep a single line pointing there plus the commands that activation does not cover (set, append, ticket, done, resize, migrate, reconcile, verify-return, log, validate).",
+    "changes": "The duplication has already cost twice: the round-8 log records \"corrected the `summary --plan` activation command and the `init --default-track/--default-size` call\", which had to be fixed in both documents. This section is 582 words — the largest block in a 5,219-token file sitting above the 4,500-token multi-branch reference tier. Saves ~60 words and removes the drift surface."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/references/ledger-schema.md §Commands, comment lines",
+    "original_text": "Normative rules live inside command comments: \"A resize to track=audit is refused while real tickets exist; close or replace them first.\", \"done also re-checks artifact/phase evidence and the ticket overlay; if a gap is intentional, add --accept-missing-evidence …\", \"Phase evidence is a phase-level log. It does not stand in for a gate's artifact pointer …\", \"set rejects derived state and partial whole-node writes\".",
+    "revised_text": "MOVE the normative sentences into §set rules (or the owning gate-matrix section); leave the command block with one-line purpose comments.",
+    "changes": "Rules embedded in commented shell are read only by someone re-reading the whole block; an agent that jumps to §set rules or to gate-matrix.md never sees the audit-resize refusal or the phase-evidence limitation. 0 words saved, ~60 relocated to where they are looked up."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/references/ledger-schema.md §Field rules, `phases.*.status` row",
+    "original_text": "\"A `done`/`skipped` status is a cache: `summary` and `done` still report any open required/conditional gate in that phase. Reopening a done or skipped phase needs `--reason`.\"",
+    "revised_text": "CONDENSE to \"A `done`/`skipped` status is a cache — see `gate-matrix.md` §Phase completion; reopening needs `--reason`.\"",
+    "changes": "The cache rule is defined in gate-matrix §Phase completion and restated at gate-matrix line 85, in SKILL.md §Ledger and audit, and here. This row is the fourth copy of a rule the schema does not own. Saves ~20 words."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/references/handoff-protocol.md §Validation checklist item 3",
+    "original_text": "\"3. **Ledger untouched**: the ledger and audit hashes still match the values captured before the handoff; any mismatch is a rejected return, not a warning.\"",
+    "revised_text": "CUT item 3; §Return contract's last bullet and its following paragraph already state the hash check and that a mismatch rejects the return. Renumber to three items.",
+    "changes": "A checklist that repeats a contract bullet adds a step without adding a check, and the phrase \"not a warning\" is already in the contract paragraph. Saves ~20 words."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": "README.md §What BMAD is (lines 24–28)",
+    "original_text": "§What BMAD is, 90 words, positioned between \"What `bmad-sdlc` does\" and \"Install\".",
+    "revised_text": "MOVE below §Use (or fold into §What `bmad-sdlc` does as two lines) so the document runs: what it does → install → use → examples → background.",
+    "changes": "A repository README is read for \"how do I run this\"; 90 words of framework background sit between the feature list and the install steps. The section already ends by pointing at `docs/bmad-sdlc.md` §5 for the tables, so it is orientation, not prerequisites. 0 words saved."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": "skills/bmad-sdlc-module/README.md §Requirements bullet 2 and §Compatibility bullet 3",
+    "original_text": "\"A BMAD install for the actual delivery work. The conductor can plan without it, but actions are blocked until the target skills exist.\" / \"Detection is automatic; a missing skill is reported and the action is blocked rather than silently substituted.\"",
+    "revised_text": "CUT the §Compatibility bullet; state the blocked-degradation rule once, in §Requirements where the missing install is described.",
+    "changes": "The blocked-not-substituted rule is the module's headline behaviour and appears twice in a 385-word README, in adjacent sections. Saves ~20 words."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": "skills/bmad-sdlc-module/setup/SKILL.md step 6 (lines 51–57)",
+    "original_text": "One 150-word paragraph containing: the `init` invocation, the track/size inference rule, the fix/audit default, the customization-resolution instruction, the \"built-in defaults mirror the shipped customize.toml, not the override\" caveat, the ledger-inside-root constraint, the append-and-pause behaviour, and the `.gitignore` line.",
+    "revised_text": "Split into an invocation block plus three labelled sub-points: **Track and size** (infer, state, ask only on conflict), **Resolve customization first** (the team/personal override file, and why the built-in defaults are not enough), **Housekeeping** (ledger inside the root; `.gitignore` entries). MOVE the append-and-pause note next to the `init` call.",
+    "changes": "Six unrelated instructions in one paragraph; the `.gitignore` action — the only thing the agent must write outside the skill — is the last clause and the easiest to drop. This is the setup skill's highest-consequence step and its least scannable. 0 words saved."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/evals/README.md §Known limitations, paragraphs 1–2",
+    "original_text": "\"**Case metadata is reachable from the run.** … A skill that explores the project root can read either and self-grade.\" and \"**The skill symlink can leave the case root.** … resolving `{project-root}/_bmad/scripts/resolve_customization.py` from the skill directory can land in the authoring repo … read scope is only partly observable from a transcript, so review it when grading.\"",
+    "revised_text": "MERGE under one heading, \"**The run can reach outside the case root**\", with two sub-bullets: metadata reachable above `cwd`, and the skill symlink resolving `_bmad` into the authoring repo. Keep both remedies and the \"treat as contaminated\" instruction.",
+    "changes": "Both paragraphs describe the same failure mode and the same remedy (isolate or copy instead of symlink), and both end by telling the grader to check read scope. Saves ~40 words and gives the grader one place to look."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/evals/README.md §Case state (237 words)",
+    "original_text": "Per-case bullets naming `fix-trivial`, `missing-build`, `fix-one-session`, `feature-one-session`, `fix-trivial-ready`, plus the `continue-with-ledger` and `status-readonly` rationale.",
+    "revised_text": "CONDENSE to the design invariants (routing cases run headless so the menu cannot hang; the conversational pair finishes without a menu; build-first cases supply name/track/size so the headless contract reaches `build.ticket`), keeping the `continue-with-ledger` state-agnostic rationale and the fixture-path note, and drop the per-id inventory that `cases.json` already holds.",
+    "changes": "The section is a hand-maintained index of a JSON file that is the actual index; every added or renamed case makes it stale, and it already carries a stale sentence (\"The stock runner stages a fixture only at the path written in `files`\" reads as history). Saves ~100 words."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": "docs/bmad-sdlc-build.memlog.md — top bullet log (lines 7–42) vs §8.2–8.5",
+    "original_text": "One-line `(event) fix:` bullets for rounds 2–8, then §8.2–8.5 narrating the same rounds (audit routing, gate authority, evidence and audit trail, routing; round-6; round-7; round-8 with its own helper and docs paragraphs).",
+    "revised_text": "MERGE: let §8.2–8.5 carry the round detail, and keep the bullet log for the entries that have no section (decisions, lint gate, test runs, corrections) plus one line per round pointing at its section.",
+    "changes": "Two records of the same events; the round-8 bullet and §8.5 both describe the same `verify-return` hash flags, `resize` refusals, and doc corrections. The log's value is the chronology, not a second narrative. Saves ~150 words."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": "docs/bmad-sdlc-build.memlog.md §Build checklist (lines 46–73)",
+    "original_text": "24 `[x]` items, 267 words, all complete, still carrying \"(initial 14, now 70 passing)\" and \"Re-run the ledger tests (29 passing)\", while the correction at line 40 declares 14/29/54/70 historical and §8.5 ends at 202 cases.",
+    "revised_text": "CONDENSE to a short scope statement (what was built: SKILL.md, six references, ledger script, module package) and keep §8.1's gate table, which is the only part with evidence. Add one \"current state\" line (version, test count) at the top of the document.",
+    "changes": "An all-checked checklist records completion, not state, and its numbers contradict three other statements in the same file; the reader has to run the correction trail to learn the current count. Saves ~230 words and removes a reconciliation task."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": "docs/bmad-sdlc.md §8 Risks and open questions (lines 116–118)",
+    "original_text": "\"Open questions (deferred, not blocking): - None. The `bmad-loop` question is closed by D26.\"",
+    "revised_text": "CUT the subsection; retitle §8 \"Risks\". D26 already closes the question where the decision log records it.",
+    "changes": "A heading that exists to say there is nothing under it, immediately after a table that does carry content. Saves ~8 words and one false section in the contents."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": "docs/bmad-sdlc.md header block and \"Resume here\" banner (lines 3–7)",
+    "original_text": "Status/Created/Purpose plus the \"Resume here\" block directing the next session to the ledger, the `next_action` gate, and the note that the build record is history, not a resume index.",
+    "revised_text": "PRESERVE.",
+    "changes": "Looks like front matter an editor would fold into §1; it is the resume contract, and it is the only place that states which of the two companion files is the index and which is the history — the distinction a new session gets wrong first. Keep as is."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/references/handoff-protocol.md §Brief template and §Fallback prompts",
+    "original_text": "A 40-line fill-in brief (rung 1) and two prompt templates (rung 3).",
+    "revised_text": "PRESERVE.",
+    "changes": "The templates read as boilerplate a structure editor would cut, but they are the payload the ladder delivers: rung 1 is unusable without the brief shape, and rung 3's whole purpose is a ready-to-paste prompt. Their presence is why the ladder above them can stay four lines."
+  },
+  {
+    "lens": "structure",
+    "pass": "structure",
+    "location": ".agents/skills/bmad-sdlc/references/menu.md §Dashboard, §Phase menu, §Action menu rendered blocks",
+    "original_text": "Three ASCII renderings of the dashboard, the phase menu, and an action menu.",
+    "revised_text": "PRESERVE.",
+    "changes": "They look like examples that prose could replace, but they are the control surface the conductor copies verbatim, including the → markers and the column layout; the surrounding instructions only make sense against them."
+  },
+  {
+    "location": "docs/bmad-sdlc-build.memlog.md, closing sentence of §8.1 (line 91) vs docs/bmad-sdlc.md resume banner (line 7)",
+    "original_text": "“The build-process memlog records the decisions, the build event, the lint gate, the review, and the fixes. It is the resume trail for the next builder session.” — against the design doc's “the build record in `docs/bmad-sdlc-build.memlog.md` is the completed build history, not the resume index.”",
+    "revised_text": "“The build-process memlog records the decisions, the build event, the lint gate, the review, and the fixes. It records how the build was done; resume from the ledger, not from this file.”",
+    "changes": "The two documents give the same file opposite roles in the same breath: one calls it the resume trail, the other says it is not the resume index. A new session that reads both has to choose, which is exactly the decision the banner exists to remove.",
+    "lens": "prose"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/references/ledger-schema.md §Summary shape, `next_action` row (line 180)",
+    "original_text": "`skill_installed` appears only when `summary` is given `--project-root`; when the first-choice skill is absent, it names the first installed alternative.",
+    "revised_text": "`skill_installed` appears only when `summary` is given `--project-root`. When the first-choice skill is absent, `skill` is rewritten to the first installed alternative and `skill_installed` reports whether that one is installed.",
+    "changes": "`skill_installed` is a boolean assignment (`chosen is None or chosen in installed`, `scripts/sdlc_plan.py:2427`), so it cannot name anything; the line just above it in the same script rewrites `next_action[\"skill\"] = chosen`. The pronoun promises a string field that does not exist, which is the kind of error an agent acts on.",
+    "lens": "prose"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/references/handoff-protocol.md §Return contract, last bullet (line 109)",
+    "original_text": "the ledger and audit trail are byte-identical to the hashes taken before the handoff.",
+    "revised_text": "the ledger and audit trail are byte-identical to their state before the handoff — their SHA-256 hashes match the pre-handoff digests.",
+    "changes": "A file cannot be byte-identical to a hash. The comparison the bullet describes is file-state to file-state, hashed; as written the validator appears to compare a file against a digest string.",
+    "lens": "prose"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/evals/README.md §Known limitations, first paragraph (line 66) — merged by structure finding 23 into the surviving “the run can reach outside the case root” passage",
+    "original_text": "Seven of the eleven inputs say “Work only in the project root” (`continue-with-ledger`, `missing-build`, `status-empty`, `status-readonly`, `fix-one-session`, `feature-one-session`, `fix-trivial-ready`); the other four rely on `SKILL.md` §Guardrails alone.",
+    "revised_text": "Every input says “Work only in the project root”; `SKILL.md` §Guardrails is the backstop for a run that ignores it.",
+    "changes": "All eleven `cases.json` inputs now carry the sentence — the round-8 diff added it to `start-greenfield`, `fix-trivial`, `model-unknown`, and `audit-start` — so both the count and the named list are stale, and the four cases said to rely on the guardrail alone now carry the instruction.",
+    "lens": "prose"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/references/ledger-schema.md line 3 and §Commands `detect` block (line 195)",
+    "original_text": "Pass `--plan` to every call; `init` records the audit path in `bmad.memlog`, and `--memlog` overrides it.",
+    "revised_text": "Pass `--plan` to every command that reads or writes the ledger; `detect` takes only `--project-root`. `init` records the audit path in `bmad.memlog`, and `--memlog` overrides it.",
+    "changes": "The document's own command list opens with `detect --project-root` and no `--plan`, as does `SKILL.md` §On Activation step 4. A reader following “every call” adds an argument the parser rejects, so the rule must exclude the one command it contradicts.",
+    "lens": "prose"
+  },
+  {
+    "location": "skills/bmad-sdlc-module/setup/SKILL.md step 6 (line 57)",
+    "original_text": "Add `_bmad-output/sdlc/*.lock` and `_bmad-output/sdlc/.tmp/` to the target project's `.gitignore`; the helper leaves its lock files beside the ledger and the conductor uses `.tmp/` for scratch.",
+    "revised_text": "Add the resolved ledger directory's `*.lock` and `.tmp/` to the target project's `.gitignore` (by default `_bmad-output/sdlc/*.lock` and `_bmad-output/sdlc/.tmp/`); the helper leaves its lock files beside the ledger and the conductor uses `.tmp/` for scratch.",
+    "changes": "The same sentence has just told the agent to take `ledger_path` from the team or personal override, then hardcodes the shipped default directory. With a custom `ledger_path` the ignore entries miss the lock files the next clause says sit beside the ledger.",
+    "lens": "prose"
+  },
+  {
+    "location": "docs/bmad-sdlc-build.memlog.md correction bullet (line 40)",
+    "original_text": "The authoritative current count is in `AGENTS.md` §Running and verifying.",
+    "revised_text": "The authoritative current count is in §8.5; `AGENTS.md` §Running and verifying has the command that produces it.",
+    "changes": "`AGENTS.md` §Running and verifying gives the unittest invocation and states no count, so the pointer resolves to a page with no number — while §8.5 ends “The suite is 202 cases.” The correction exists to send the reader to the truth and sends them to a dead end.",
+    "lens": "prose"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/SKILL.md §References, closing paragraph (line 144) — the paragraph structure finding 9 keeps as the single statement of authority",
+    "original_text": "When two sources disagree: this file and the reference define intent, `gate-matrix.md` defines gate levels, and `summary` is authoritative at runtime because it resolves levels from track, size, and model.",
+    "revised_text": "When two sources disagree: this file and the reference the current step named define intent; `gate-matrix.md` defines gate levels; `summary` is authoritative at runtime because it resolves levels from track, size, and model.",
+    "changes": "“the reference” has no antecedent — six reference files are listed four lines above — and the sentence both folds `gate-matrix.md` into “the reference … define intent” and gives it its own category, so a reader cannot tell which rule claims it. Making this the precedence statement (finding 9) raises the price of the ambiguity.",
+    "lens": "prose"
+  },
+  {
+    "location": "docs/bmad-sdlc.md §8 risks table, “Context-rot in long runs” row (line 114)",
+    "original_text": "Fresh subagent per skill; step files and references loaded JIT.",
+    "revised_text": "Consider: “Fresh subagent per skill; `SKILL.md` and the reference files loaded JIT.”",
+    "changes": "The package has one `SKILL.md` and six reference files — `README.md` §Repository layout and `AGENTS.md` §Where things are both enumerate them — and no step files. “Step files” is a BMAD workflow convention this skill does not use, so the mitigation names a component the reader will search for and not find.",
+    "lens": "prose"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/references/version-adapters.md line 47 and §Alias resolution item 2 (line 59)",
+    "original_text": "is in the `v6` and `Current` columns of `phase-map.md` … / The `Current` skill in the same row",
+    "revised_text": "is in the `v6 skill` and `Current-model skill` columns of `phase-map.md` … / The `Current-model skill` in the same row",
+    "changes": "The phase-map table has no columns named `v6` or `Current`; its headers are `v6 skill` and `Current-model skill`. `Current` is a header only in this file's §Skill mapping table. Backticks present the wrong names as literal identifiers, so the reader looks for a header that is not there.",
+    "lens": "prose"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/references/menu.md §Dashboard (line 17)",
+    "original_text": "a workstream that is `fix` or `trivial` starts in Build.",
+    "revised_text": "a workstream whose track is `fix` or whose size is `trivial` starts in Build.",
+    "changes": "`fix` is a track value and `trivial` a size value; the single verb “is” presents both as properties of the workstream and invites reading `trivial` as a track. This is the sentence that decides whether the phase menu is skipped, so the category matters.",
+    "lens": "prose"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/references/ledger-schema.md §Field rules, `override_reason` row (line 165)",
+    "original_text": "The reopen and metadata rules are in `gate-matrix.md` §Override rules and §Reopening.",
+    "revised_text": "The override rules are in `gate-matrix.md` §Override rules; the reopen rules are in §Reopening.",
+    "changes": "No section of `gate-matrix.md` covers “metadata”, and two categories are paired with two sections in an order that suggests §Override rules covers reopen and §Reopening covers metadata. The reader of a field rule needs each pointer to land on its rule.",
+    "lens": "prose"
+  },
+  {
+    "location": "AGENTS.md §Policy, first bullet (line 10)",
+    "original_text": "Customize with a sidecar: `_bmad/custom/<skill>.toml` (team, committed) or `<skill>.user.toml` (personal, ignored).",
+    "revised_text": "Customize with a sidecar: `_bmad/custom/<skill>.toml` (team, committed) or `_bmad/custom/<skill>.user.toml` (personal, ignored).",
+    "changes": "The team path carries its directory and the personal path does not, so the personal file reads as if it belongs beside the skill. `customize.toml` lines 5–7 and `setup/SKILL.md` step 4 both place it under `_bmad/custom/`.",
+    "lens": "prose"
+  },
+  {
+    "location": "skills/bmad-sdlc-module/README.md §Layout, last paragraph (line 49)",
+    "original_text": "**Canonical source:** `{repo}/.agents/skills/bmad-sdlc/`.",
+    "revised_text": "**Canonical source:** `.agents/skills/bmad-sdlc/` in the authoring repository.",
+    "changes": "`{repo}` resolves nowhere: the placeholders this package defines are `{module-root}`, `{project-root}`, and `{skill-root}`, and nothing substitutes `{repo}`. As written the reader cannot tell a path variable from a literal directory name.",
+    "lens": "prose"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/SKILL.md §Guardrails, override bullet (line 116)",
+    "original_text": "A `blocked` gate is not passed: resolve it or override with a reason.",
+    "revised_text": "Marking a gate `blocked` never passes it: resolve it or override with a reason.",
+    "changes": "“is not passed” uses the same verb as the `passed` status the sentence rules out, and the passive leaves the actor unstated — so the line can read as “a blocked gate is not approved” rather than “`blocked` is not a decision.” The rule it carries is that the status never clears the gate.",
+    "lens": "prose"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/SKILL.md §Guardrails, “No silent success” bullet (line 125)",
+    "original_text": "Report an artifact missing, a success claim without a file, or a skill absent; name any scratch file you leave behind.",
+    "revised_text": "Report a missing artifact, a success claim without a file, or a missing skill; name any scratch file you leave behind.",
+    "changes": "The first and third items invert noun and adjective differently, so the list has no shared grammar and “a skill absent” reads as the start of a clause. Aligning the three items costs nothing and keeps the bullet scannable.",
+    "lens": "prose"
+  },
+  {
+    "location": "README.md §Verify (line 127)",
+    "original_text": "the eval commands and their limitations are in `evals/README.md`.",
+    "revised_text": "the eval commands and their limitations are in `.agents/skills/bmad-sdlc/evals/README.md`.",
+    "changes": "The README sits at the repository root, where no `evals/` directory exists; the file is under the skill tree, as the §Repository layout block in the same document shows. The bare path is unresolvable from where the reader stands.",
+    "lens": "prose"
+  },
+  {
+    "location": ".agents/skills/bmad-sdlc/SKILL.md §On Activation step 5 (line 73) against lines 80 and 86",
+    "original_text": "`references/ledger-schema.md` § Resume semantics (line 73) versus `references/ledger-schema.md` §Resume semantics (lines 80 and 86)",
+    "revised_text": "Use `§Resume semantics` with no space at all three sites.",
+    "changes": "The heading is `## Resume semantics`. The space on line 73 makes one pointer differ from the other two in a file where § pointers are the navigation mechanism, and it reads as a different section.",
+    "lens": "prose"
+  }
+]
