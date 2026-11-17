@@ -37,6 +37,7 @@ import contextlib
 import csv
 import fnmatch
 import functools
+import hashlib
 import io
 import json
 import os
@@ -212,6 +213,92 @@ CURRENT_ALIASES = {
     "bmad-product-brief": "bmad-agent-analyst",
     "bmad-prfaq": "bmad-agent-analyst",
 }
+
+# Skills that satisfy the same action when the first choice is not installed.
+# phase-map.md names several of these as "X or Y"; the resolver can only pick
+# one name, so summary narrows the list against the detected install.
+SKILL_ALTERNATIVES = {
+    "bmad-prd": ("bmad-agent-pm",),
+    "bmad-spec": ("bmad-agent-po",),
+    "bmad-create-epics-and-stories": ("bmad-agent-po",),
+    "bmad-sprint-planning": ("bmad-agent-po",),
+    "bmad-product-brief": ("bmad-agent-analyst",),
+    "bmad-prfaq": ("bmad-agent-analyst",),
+    "bmad-code-review": ("bmad-build",),
+    # Reverse direction: a current-model install that lost its persona agent
+    # can still use the focused skill that performs the same action.
+    "bmad-agent-pm": ("bmad-prd",),
+    "bmad-agent-po": (
+        "bmad-spec",
+        "bmad-create-epics-and-stories",
+        "bmad-sprint-planning",
+    ),
+    "bmad-agent-analyst": ("bmad-product-brief", "bmad-prfaq"),
+    "bmad-tea": (
+        "bmad-testarch-trace",
+        "bmad-testarch-nfr",
+        "bmad-testarch-test-review",
+        "bmad-testarch-test-design",
+        "bmad-testarch-framework",
+        "bmad-testarch-ci",
+    ),
+}
+
+
+# Gate-aware alternatives: a persona agent is not a substitute for every
+# action it can own. plan.stories must not fall back to the spec writer just
+# because both live under bmad-agent-po in the current model.
+SKILL_ALTERNATIVES_BY_GATE = {
+    "plan.stories": (
+        "bmad-create-epics-and-stories",
+        "bmad-sprint-planning",
+        "bmad-agent-po",
+    ),
+    "plan.sprint": ("bmad-sprint-planning", "bmad-agent-po"),
+    "plan.ux": ("bmad-ux", "bmad-agent-ux-designer"),
+    "plan.architecture": ("bmad-architecture", "bmad-agent-architect"),
+    "solution.test_design": ("bmad-testarch-test-design", "bmad-tea"),
+    "solution.framework": ("bmad-testarch-framework", "bmad-tea"),
+    "solution.ci": ("bmad-testarch-ci", "bmad-tea"),
+    "verify.trace": ("bmad-testarch-trace", "bmad-tea"),
+    "verify.nfr": ("bmad-testarch-nfr", "bmad-tea"),
+    "verify.test_review": ("bmad-testarch-test-review", "bmad-tea"),
+    "build.ticket": ("bmad-build",),
+    "build.tests": ("bmad-build",),
+    "build.review": ("bmad-code-review", "bmad-build"),
+    "build.done": ("bmad-sprint-planning", "bmad-agent-po"),
+    "close.retro": ("bmad-retrospective",),
+    "close.walkthrough": ("bmad-walkthrough",),
+}
+
+
+def _gate_alternative_key(gate: str | None) -> str:
+    """Normalise build.<ticket>.<gate> to the build gate family."""
+    if not gate:
+        return ""
+    parts = gate.split(".")
+    if parts[0] == "build" and len(parts) >= 3:
+        return f"build.{parts[-1]}"
+    return gate
+
+
+def skill_alternatives(
+    skill: str, installed: set[str], model: str, gate: str | None = None
+) -> list[str]:
+    """Installed skills that can satisfy the same action, in preference order."""
+    gate_key = _gate_alternative_key(gate)
+    names = SKILL_ALTERNATIVES_BY_GATE.get(gate_key) or ()
+    candidates: list[str] = []
+    for name in names:
+        candidates.append(name)
+    if not candidates:
+        for name in SKILL_ALTERNATIVES.get(skill, ()):
+            candidates.append(name)
+    if skill.startswith("bmad-testarch-") and model != "current":
+        # The current test-architecture agent can play the v6 capability when
+        # the v6 family is not installed.
+        candidates.append("bmad-tea")
+    return [name for name in candidates if name in installed]
 
 
 def now_iso() -> str:
@@ -425,7 +512,14 @@ def save_plan(path: Path, data: dict) -> None:
     atomic_write_text(path, buffer.getvalue())
 
 
-def read_skills(project_root: Path) -> tuple[set[str], str | None]:
+def read_skills(project_root: Path) -> tuple[set[str], str | None, set[str]]:
+    """Installed skills, the skills directory used, and manifest-only names.
+
+    A name in the installer manifest is evidence of intent, not of a readable
+    skill: without a ``SKILL.md`` under one of ``SKILL_DIRS`` the conductor
+    cannot load it. Manifest-only names are reported separately so a broken
+    install blocks honestly instead of claiming an absent skill is available.
+    """
     found: set[str] = set()
     used_dir: str | None = None
     for rel in SKILL_DIRS:
@@ -441,6 +535,8 @@ def read_skills(project_root: Path) -> tuple[set[str], str | None]:
                 continue
             found.add(item.name)
             used_dir = used_dir or rel
+    dir_skills = set(found)
+    manifest_names: set[str] = set()
     manifest = project_root / "_bmad" / "_config" / "skill-manifest.csv"
     if manifest.is_file():
         try:
@@ -451,11 +547,11 @@ def read_skills(project_root: Path) -> tuple[set[str], str | None]:
                         if value == "bmad-sdlc":
                             continue
                         if value.startswith("bmad-"):
-                            found.add(value)
+                            manifest_names.add(value)
                             break
         except OSError:
             pass
-    return found, used_dir
+    return found | manifest_names, used_dir, manifest_names - dir_skills
 
 
 def resolve_paths(project_root: Path) -> dict[str, str]:
@@ -526,14 +622,52 @@ def _resolve_root(args: argparse.Namespace) -> Path:
     ).resolve()
 
 
+def _known_project_roots(args: argparse.Namespace, ledger: Path) -> list[Path]:
+    """Project roots the command can trust, explicit first."""
+    roots: list[Path] = []
+    if getattr(args, "project_root", None):
+        roots.append(_resolve_root(args))
+    default = _default_project_root(ledger)
+    if default is not None:
+        roots.append(default)
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for root in roots:
+        resolved = root.resolve()
+        if str(resolved) not in seen:
+            seen.add(str(resolved))
+            unique.append(resolved)
+    return unique
+
+
+def _inside(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
 def resolve_memlog(data: dict, args: argparse.Namespace, ledger: Path) -> Path:
-    """Resolve the audit trail: explicit flag, then the path recorded at init."""
+    """Resolve the audit trail: explicit flag, then the path recorded at init.
+
+    A recorded path is project-relative. Resolve it against a known project
+    root; when the command cannot name one, try the ledger's ancestors so a
+    custom ledger layout still finds the trail instead of nesting it under
+    the ledger directory.
+    """
+    roots = _known_project_roots(args, ledger)
     if getattr(args, "memlog", None):
-        root = _resolve_root(args)
+        root = roots[0] if roots else _resolve_root(args)
         value = expand_project_root(args.memlog, root)
         resolved = (value if value.is_absolute() else root / value).resolve()
         if resolved == ledger.resolve():
             fail("the audit trail must differ from the ledger")
+        if roots and not _inside(resolved, roots[0]):
+            fail(
+                "the audit trail must resolve inside the project root: "
+                f"{resolved}"
+            )
         return resolved
     recorded = (data.get("bmad") or {}).get("memlog")
     if recorded:
@@ -541,15 +675,31 @@ def resolve_memlog(data: dict, args: argparse.Namespace, ledger: Path) -> Path:
         if candidate.is_absolute():
             resolved = candidate.resolve()
         else:
-            root = _default_project_root(ledger)
-            if root is not None:
-                resolved = (root / candidate).resolve()
-            else:
-                resolved = (ledger.parent / candidate).resolve()
+            candidates = [(root / candidate).resolve() for root in roots]
+            # Legacy ledgers recorded the path relative to the ledger
+            # directory; accepting it keeps those ledgers readable.
+            for parent in (ledger.parent, *ledger.parent.parents):
+                candidates.append((parent / candidate).resolve())
+            resolved = None
+            for candidate_path in candidates:
+                if candidate_path.exists():
+                    resolved = candidate_path
+                    break
+            if resolved is None:
+                resolved = (
+                    candidates[0]
+                    if candidates
+                    else (ledger.parent / candidate).resolve()
+                )
         if resolved == ledger.resolve():
             # A recorded audit path equal to the ledger would make every write
             # lock the ledger a second time and hang. Treat it as corruption.
             fail("the audit trail must differ from the ledger")
+        if roots and not any(_inside(resolved, root) for root in roots):
+            fail(
+                "the recorded audit trail must resolve inside the project "
+                f"root: {resolved}"
+            )
         return resolved
     return ledger.parent / ".memlog.md"
 
@@ -735,7 +885,7 @@ def inventory(project_root: Path, paths: dict[str, str]) -> dict:
 
 
 def detect_document(project_root: Path) -> dict:
-    skills, skills_dir = read_skills(project_root)
+    skills, skills_dir, manifest_only = read_skills(project_root)
     if "bmad-agent-po" in skills:
         model = "current"
         evidence = "bmad-agent-po is installed"
@@ -789,6 +939,7 @@ def detect_document(project_root: Path) -> dict:
         "test_style": test_style,
         "evidence": evidence,
         "skills": sorted(skills),
+        "manifest_only": sorted(manifest_only),
         "missing_core": missing_core,
         "missing_optional": optional,
         "paths": resolved,
@@ -1014,12 +1165,12 @@ def default_workstream(name: str, track: str, size: str, stamp: str, model: str)
             "gates": {
                 "ticket": {
                     "status": "skipped",
-                    "decided_at": None,
+                    "decided_at": stamp,
                     "override_reason": None,
                 },
                 "tests": {
                     "status": "skipped",
-                    "decided_at": None,
+                    "decided_at": stamp,
                     "override_reason": None,
                 },
                 "review": {
@@ -1029,7 +1180,7 @@ def default_workstream(name: str, track: str, size: str, stamp: str, model: str)
                 },
                 "done": {
                     "status": "skipped",
-                    "decided_at": None,
+                    "decided_at": stamp,
                     "override_reason": None,
                 },
             },
@@ -1372,7 +1523,7 @@ def first_blocking(entries: list[dict]) -> dict | None:
                 return entry
             if (
                 level in ("required", "conditional")
-                and entry["status"] == "skipped"
+                and entry["status"] in ("skipped", "overridden")
                 and not entry["override_reason"]
             ):
                 return entry
@@ -1390,7 +1541,7 @@ def phase_blocking(entries: list[dict]) -> list[dict]:
             blocking.append(entry)
         elif (
             entry["level"] in ("required", "conditional")
-            and entry["status"] == "skipped"
+            and entry["status"] in ("skipped", "overridden")
             and not entry["override_reason"]
         ):
             blocking.append(entry)
@@ -1558,6 +1709,12 @@ def cmd_init(args: argparse.Namespace) -> None:
     )
     if memlog_path == ledger_path.resolve():
         fail("the audit trail must differ from the ledger")
+    root_resolved = project_root.resolve()
+    for label, candidate in (("ledger", ledger_path), ("audit trail", memlog_path)):
+        try:
+            candidate.resolve().relative_to(root_resolved)
+        except ValueError:
+            fail(f"{label} must resolve inside the project root: {candidate}")
     template_path = None
     if args.template:
         candidate = expand_project_root(args.template, project_root)
@@ -1649,11 +1806,10 @@ def cmd_init(args: argparse.Namespace) -> None:
     data["created"] = stamp if args.force else (data.get("created") or stamp)
     data["updated"] = stamp
     if args.memlog or not (data.get("bmad") or {}).get("memlog"):
-        recorded_memlog = (
-            str(memlog_path)
-            if _default_project_root(ledger_path) is None
-            else project_relative(str(memlog_path), project_root)
-        )
+        # Keep the committed plan portable: always prefer a project-relative
+        # audit path. A path outside the root is refused above, so this cannot
+        # silently write a machine-specific absolute path into shared history.
+        recorded_memlog = project_relative(str(memlog_path), project_root)
     else:
         recorded_memlog = (data.get("bmad") or {}).get("memlog")
     # Merge, do not replace: a custom template may add organization-specific
@@ -1692,6 +1848,11 @@ def cmd_init(args: argparse.Namespace) -> None:
         for other_id, other in workstreams.items():
             if not isinstance(other, dict):
                 continue
+            if str(other.get("status") or "active") in ("done", "paused"):
+                fail(
+                    f"workstream {other_id} is {other.get('status')}; reopen "
+                    "it before changing the model"
+                )
             for entry in apply_levels(other, model):
                 if entry.startswith("phases.") and entry.endswith(
                     ".status->pending"
@@ -1946,6 +2107,15 @@ def cmd_validate(args: argparse.Namespace) -> None:
                             f"{label}.gates.{phase}.{name}.status must be one of "
                             f"{', '.join(GATE_STATUSES)}"
                         )
+                    if node.get("status") in (
+                        "passed",
+                        "overridden",
+                        "skipped",
+                    ) and not node.get("decided_at"):
+                        errors.append(
+                            f"{label}.gates.{phase}.{name} is decided without "
+                            "decided_at"
+                        )
                     level = node.get("level")
                     if level is None:
                         warnings.append(
@@ -2032,6 +2202,22 @@ def cmd_validate(args: argparse.Namespace) -> None:
                         errors.append(
                             f"{tlabel}.gates.{gate_name}.status must be one of "
                             f"{', '.join(GATE_STATUSES)}"
+                        )
+                    if "evidence" in node:
+                        pointer = node.get("evidence")
+                        if not isinstance(pointer, str) or not pointer.strip():
+                            errors.append(
+                                f"{tlabel}.gates.{gate_name}.evidence must be a "
+                                "non-empty path string"
+                            )
+                    if node.get("status") in (
+                        "passed",
+                        "overridden",
+                        "skipped",
+                    ) and not node.get("decided_at"):
+                        errors.append(
+                            f"{tlabel}.gates.{gate_name} is decided without "
+                            "decided_at"
                         )
                     if (
                         node.get("status") == "overridden"
@@ -2157,7 +2343,24 @@ def cmd_summary(args: argparse.Namespace) -> None:
     workstream_id = args.workstream or data.get("active_workstream")
     if not workstream_id:
         briefs = workstream_briefs(workstreams, model)
+        # active_workstream is cleared when the active workstream closes or
+        # pauses. Report the most recently updated workstream, not whichever
+        # was inserted last: the headless block says "the last recorded
+        # track/size/phase", and a paused newer workstream is not that.
         last = briefs[-1] if briefs else None
+        if workstreams:
+            latest_id = max(
+                workstreams,
+                key=lambda key: str(
+                    (workstreams.get(key) or {}).get("updated") or ""
+                ),
+            )
+            latest = workstreams.get(latest_id) or {}
+            last = {
+                "track": latest.get("track"),
+                "size": latest.get("size"),
+                "current_phase": latest.get("current_phase"),
+            }
         emit(
             {
                 "ok": True,
@@ -2314,7 +2517,23 @@ def cmd_summary(args: argparse.Namespace) -> None:
     cached = workstream.get("next")
     cached_action = cached.get("action") if isinstance(cached, dict) else None
     computed_action = computed.get("action") if computed else None
-    stale = bool(cached_action and computed_action and cached_action != computed_action)
+    cached_identity = (
+        cached.get("phase"),
+        cached.get("gate"),
+        cached.get("action"),
+        cached.get("ticket"),
+    ) if isinstance(cached, dict) else None
+    computed_identity = (
+        computed.get("phase"),
+        computed.get("gate"),
+        computed.get("action"),
+        computed.get("ticket"),
+    ) if computed else None
+    stale = bool(
+        cached_action
+        and computed_action
+        and cached_identity != computed_identity
+    )
     next_action = computed or (cached if isinstance(cached, dict) else None)
     if workstream.get("status") in ("done", "paused"):
         next_action = None
@@ -2325,11 +2544,24 @@ def cmd_summary(args: argparse.Namespace) -> None:
             project_root = Path(
                 expand_project_root(args.project_root, Path.cwd())
             ).resolve()
-            installed, _ = read_skills(project_root)
+            installed, _, manifest_only = read_skills(project_root)
+            requested = next_action.get("skill")
+            chosen = requested
+            if chosen and chosen not in installed:
+                alternatives = skill_alternatives(
+                    chosen, installed, model, next_action.get("gate")
+                )
+                if alternatives:
+                    chosen = alternatives[0]
+            next_action["skill"] = chosen
             next_action["skill_installed"] = (
-                next_action.get("skill") is None
-                or next_action.get("skill") in installed
+                chosen is None or chosen in installed
             )
+            next_action["skill_manifest_only"] = bool(
+                chosen and chosen in manifest_only
+            )
+            if chosen != requested and requested:
+                next_action["skill_requested"] = requested
 
     artifacts = {
         key: value
@@ -2519,7 +2751,8 @@ def _validate_path(path: str, ticket_map: dict | None = None) -> None:
             fail(f"unknown ticket gate in path: {path}")
         if len(rest) > 3 or (
             len(rest) == 3
-            and rest[2] not in ("status", "decided_at", "override_reason")
+            and rest[2]
+            not in ("status", "decided_at", "override_reason", "evidence")
         ):
             fail(f"unknown ticket gate field in path: {path}")
     elif root == "artifacts":
@@ -2547,6 +2780,10 @@ def _validate_path(path: str, ticket_map: dict | None = None) -> None:
 
 
 def _validate_value(path: str, value, ticket_map: dict | None = None) -> None:
+    if path == "schema":
+        if value != SCHEMA:
+            fail(f"schema must be {SCHEMA!r}")
+        return
     target = _gate_status_target(path)
     if target:
         if value not in GATE_STATUSES:
@@ -2567,6 +2804,10 @@ def _validate_value(path: str, value, ticket_map: dict | None = None) -> None:
             )
         if "level" in value:
             fail("gate levels are derived; use resize or migrate")
+        if "evidence" in value:
+            pointer = value.get("evidence")
+            if not isinstance(pointer, str) or not pointer.strip():
+                fail("ticket gate evidence must be a non-empty path string")
         return
     parts = _parts(path)
     if parts and parts[0] == "phases" and len(parts) == 2:
@@ -2612,6 +2853,15 @@ def _validate_value(path: str, value, ticket_map: dict | None = None) -> None:
         note = value.get("note")
         if note is not None and not isinstance(note, str):
             fail("phases.<phase>.note must be a string")
+    if (
+        parts
+        and parts[0] == "tickets"
+        and len(parts) >= 3
+        and parts[-1] == "evidence"
+    ):
+        if not isinstance(value, str) or not value.strip():
+            fail("ticket gate evidence must be a non-empty path string")
+        return
     elif parts and parts[0] == "tickets":
         resolved = _resolve_ticket_path(parts, ticket_map)
         is_node = len(parts) == 2 or (resolved is not None and not resolved[1])
@@ -2634,6 +2884,13 @@ def _validate_value(path: str, value, ticket_map: dict | None = None) -> None:
                             f"ticket gate {name} needs a status; choose one of "
                             + ", ".join(GATE_STATUSES)
                         )
+                    if isinstance(gate, dict) and "evidence" in gate:
+                        pointer = gate.get("evidence")
+                        if not isinstance(pointer, str) or not pointer.strip():
+                            fail(
+                                f"ticket gate {name}.evidence must be a "
+                                "non-empty path string"
+                            )
             title = value.get("title")
             if title is not None and not isinstance(title, str):
                 fail("tickets.<id>.title must be a string")
@@ -2690,6 +2947,18 @@ def _validate_value(path: str, value, ticket_map: dict | None = None) -> None:
     elif path == "bmad.model":
         if value not in ("v6", "current", "unknown"):
             fail("bmad.model must be one of v6, current, unknown")
+    elif path == "project":
+        if not isinstance(value, str) or not value.strip():
+            fail("project must be a non-empty string")
+    elif path in ("created", "updated"):
+        if not isinstance(value, str) or not value.strip():
+            fail(f"{path} must be an ISO-8601 timestamp")
+    elif path == "current_phase":
+        if value not in PHASES:
+            fail(
+                f"unknown current_phase {value!r}; choose one of "
+                + ", ".join(PHASES)
+            )
 
 
 def _written_gate(
@@ -2740,10 +3009,11 @@ def _guard_ticket_order(workstream: dict, path: str, value) -> None:
         return str((node or {}).get("status") or "open") if isinstance(node, dict) else "open"
 
     if gate_name == "done":
-        if status("review") not in ("passed", "overridden"):
-            fail("build.done cannot be decided before build.review")
-        if value == "passed" and status("review") != "passed":
-            fail("build.done requires a passed build.review")
+        if status("review") != "passed":
+            fail(
+                "build.done requires a passed build.review; "
+                "an overridden review is not enough"
+            )
     if (
         gate_name == "review"
         and workstream.get("track") != "audit"
@@ -2799,10 +3069,11 @@ def _guard_ticket_node(
                     else "open"
                 )
             if gate_name == "done":
-                if new_statuses["review"] not in ("passed", "overridden"):
-                    fail("build.done cannot be decided before build.review")
-                if new_status == "passed" and new_statuses["review"] != "passed":
-                    fail("build.done requires a passed build.review")
+                if new_statuses["review"] != "passed":
+                    fail(
+                        "build.done requires a passed build.review; "
+                        "an overridden review is not enough"
+                    )
             if (
                 gate_name == "review"
                 and str(root.get("track") or "") != "audit"
@@ -2820,6 +3091,36 @@ def _guard_ticket_node(
                 "cannot clear a decided gate's override_reason by replacing "
                 f"{synthetic}; reopen it with --reason first"
             )
+        if (
+            isinstance(old_node, dict)
+            and old_node.get("evidence")
+            and not new_node.get("evidence")
+            and new_status in ("passed", "overridden", "skipped")
+        ):
+            fail(
+                "cannot drop a decided gate's evidence by replacing "
+                f"{synthetic}; keep the pointer or reopen the gate first"
+            )
+        if new_status in ("open", "blocked"):
+            if new_node.get("evidence"):
+                fail(
+                    "evidence applies to a decided gate, not open or blocked: "
+                    f"{synthetic}"
+                )
+            new_node.pop("evidence", None)
+        old_status = (
+            old_node.get("status") if isinstance(old_node, dict) else None
+        )
+        if new_status == old_status:
+            new_node["decided_at"] = (
+                old_node.get("decided_at") if isinstance(old_node, dict) else None
+            )
+        elif new_status in ("passed", "overridden", "skipped"):
+            # A new decision gets its own timestamp; a payload cannot
+            # backdate it.
+            new_node["decided_at"] = now_iso()
+        else:
+            new_node["decided_at"] = None
 
 
 def _guard_reopen(root: dict, path: str, value, reason: str | None) -> None:
@@ -3102,7 +3403,11 @@ def cmd_set(args: argparse.Namespace) -> None:
     value = parse_value(args.value, args.null)
     _validate_value(args.path, value, ticket_map)
     if parts and parts[0] == "artifacts" and isinstance(value, str) and value:
-        project_root = _default_project_root(path)
+        project_root = (
+            Path(expand_project_root(args.project_root, Path.cwd())).resolve()
+            if getattr(args, "project_root", None)
+            else _default_project_root(path)
+        )
         if project_root is not None:
             candidate = Path(expand_project_root(value, project_root))
             if not candidate.is_absolute():
@@ -3154,6 +3459,20 @@ def cmd_set(args: argparse.Namespace) -> None:
         and len(resolved_ticket[1]) == 2
         and resolved_ticket[1][0] == "gates"
     )
+    if (
+        resolved_ticket is not None
+        and len(resolved_ticket[1]) == 3
+        and resolved_ticket[1][0] == "gates"
+        and resolved_ticket[1][2] == "evidence"
+    ):
+        # Evidence belongs to a decided gate. Writing it as a leaf must not
+        # create a status-less gate node that validate then rejects.
+        ticket = (ticket_map or {}).get(resolved_ticket[0]) or {}
+        gate = (ticket.get("gates") or {}).get(resolved_ticket[1][1])
+        if not isinstance(gate, dict) or gate.get("status") not in GATE_STATUSES:
+            fail("create the gate with the ticket command first")
+        if gate.get("status") not in ("passed", "overridden", "skipped"):
+            fail("evidence applies to a decided gate, not open or blocked")
     replace_required = (
         args.path == "bmad"
         or ticket_node
@@ -3166,6 +3485,24 @@ def cmd_set(args: argparse.Namespace) -> None:
         fail(f"replacing {args.path} needs --replace and --reason")
     if args.replace and not str(args.reason or "").strip():
         fail("--replace needs --reason")
+    roots = _known_project_roots(args, path)
+    if roots and parts and parts[0] == "tickets":
+        pointers: list[str] = []
+        if parts[-1] == "evidence" and isinstance(value, str):
+            pointers.append(value)
+        if isinstance(value, dict):
+            if ticket_node:
+                for node in (value.get("gates") or {}).values():
+                    if isinstance(node, dict) and node.get("evidence"):
+                        pointers.append(str(node["evidence"]))
+            elif ticket_gate_node and value.get("evidence"):
+                pointers.append(str(value["evidence"]))
+        for pointer in pointers:
+            candidate = Path(pointer)
+            if not candidate.is_absolute():
+                candidate = roots[0] / candidate
+            if not _inside(candidate, roots[0]):
+                fail("ticket gate evidence must stay inside the project root")
     if args.path == "bmad":
         previous = data.get("bmad") or {}
         if previous.get("memlog") and not (
@@ -3177,10 +3514,18 @@ def cmd_set(args: argparse.Namespace) -> None:
             )
         if isinstance(value, dict) and value.get("memlog"):
             recorded = Path(str(value["memlog"]))
+            bmad_roots = _known_project_roots(args, path)
+            base = bmad_roots[0] if bmad_roots else path.parent
             if not recorded.is_absolute():
-                recorded = (_default_project_root(path) or path.parent) / recorded
-            if recorded.resolve() == path.resolve():
+                recorded = base / recorded
+            resolved_recorded = recorded.resolve()
+            if resolved_recorded == path.resolve():
                 fail("the audit trail must differ from the ledger")
+            if bmad_roots and not _inside(resolved_recorded, bmad_roots[0]):
+                fail(
+                    "the audit trail must resolve inside the project root: "
+                    f"{resolved_recorded}"
+                )
     if args.path == "decisions":
         fail("decisions are append-only; use append")
     if (
@@ -3229,6 +3574,25 @@ def cmd_set(args: argparse.Namespace) -> None:
     parent, key = get_parent(root, args.path)
     node_write = written is not None and _gate_status_target(args.path) is None
     previous = parent.get(key)
+    if (
+        parts
+        and parts[0] == "phases"
+        and len(parts) == 2
+        and isinstance(value, dict)
+        and isinstance(previous, dict)
+    ):
+        kept = value.get("evidence")
+        if isinstance(kept, list):
+            dropped = [
+                entry
+                for entry in (previous.get("evidence") or [])
+                if entry not in kept
+            ]
+            if dropped:
+                fail(
+                    "phase evidence is append-only; keep the existing entries "
+                    "and use append for new ones"
+                )
     if isinstance(value, dict):
         if (
             parts
@@ -3240,29 +3604,38 @@ def cmd_set(args: argparse.Namespace) -> None:
             # that validate then rejects.
             if isinstance(previous, dict) and previous.get("gate"):
                 value.setdefault("gate", previous["gate"])
-        if (
-            node_write
-            and parts
-            and parts[0] == "gates"
-            and len(parts) == 3
-            and isinstance(previous, dict)
-        ):
-            # `level` is derived and is rejected in a payload, so a node
-            # replacement must inherit it. A decided node also keeps its
-            # decision metadata unless the write reopens it.
-            if previous.get("level"):
-                value.setdefault("level", previous["level"])
-            if (
-                value.get("status") == previous.get("status")
-                and previous.get("decided_at")
-            ):
-                value.setdefault("decided_at", previous["decided_at"])
+        if node_write and isinstance(previous, dict):
+            # A node replacement keeps the metadata the schema treats as
+            # part of the decision. A decided gate cannot silently lose the
+            # artifact it closed on; reopening it removes the pointer later.
+            if parts and parts[0] == "gates" and len(parts) == 3:
+                # `level` is derived and is rejected in a payload, so a node
+                # replacement must inherit it.
+                if previous.get("level"):
+                    value.setdefault("level", previous["level"])
+            # decided_at is derived; a replacement may not backdate or erase
+            # the decision history by supplying its own timestamp.
+            if value.get("status") == previous.get("status"):
+                value["decided_at"] = previous.get("decided_at")
+            elif value.get("status") in ("passed", "overridden", "skipped"):
+                value["decided_at"] = now_iso()
+            else:
+                value["decided_at"] = None
             if (
                 previous.get("override_reason")
                 and value.get("status") in ("passed", "overridden", "skipped")
                 and not value.get("override_reason")
             ):
                 value.setdefault("override_reason", previous["override_reason"])
+            if (
+                previous.get("evidence")
+                and value.get("status") in ("passed", "overridden", "skipped")
+                and not value.get("evidence")
+            ):
+                fail(
+                    "cannot drop a decided gate's evidence by replacing it; "
+                    "keep the pointer or reopen the gate first"
+                )
     parent[key] = value
     if written is not None and scope_id is not None:
         kind, reference, gate_name, status = written
@@ -3285,9 +3658,7 @@ def cmd_set(args: argparse.Namespace) -> None:
                 # the --reason on the command explains the replacement.
                 reason = str(stored["override_reason"]).strip()
             else:
-                reason = str(
-                    args.reason or stored.get("override_reason") or ""
-                ).strip()
+                reason = str(args.reason or "").strip()
             if not reason:
                 fail(
                     f"{kind} gate {reference}.{gate_name} is {level}; "
@@ -3305,9 +3676,15 @@ def cmd_set(args: argparse.Namespace) -> None:
             # override reason. A reopen reason lives in the audit trail.
             stored["override_reason"] = None
         if status is not None:
-            stored["decided_at"] = (
-                None if status in ("open", "blocked") else now_iso()
-            )
+            if status in ("open", "blocked"):
+                # Reopening starts fresh work: the previous decision's
+                # evidence must not keep satisfying the gate.
+                stored.pop("evidence", None)
+                stored["decided_at"] = None
+            elif status != current_status:
+                stored["decided_at"] = now_iso()
+            elif not stored.get("decided_at"):
+                stored["decided_at"] = now_iso()
     if (
         scope_id is not None
         and parts
@@ -3372,9 +3749,19 @@ def cmd_set(args: argparse.Namespace) -> None:
                 "without --reason"
             )
         reopened: list[str] = []
+        model_changes = value != current_model
         for workstream_id, workstream in (data.get("workstreams") or {}).items():
             if not isinstance(workstream, dict):
                 continue
+            if model_changes and str(workstream.get("status") or "active") in (
+                "done",
+                "paused",
+            ):
+                fail(
+                    f"workstream {workstream_id} is "
+                    f"{workstream.get('status')}; reopen it before changing "
+                    "the model"
+                )
             for entry in apply_levels(workstream, value):
                 if entry.startswith("phases.") and entry.endswith(
                     ".status->pending"
@@ -3461,6 +3848,12 @@ def cmd_append(args: argparse.Namespace) -> None:
     parts = _parts(args.path)
     if parts and parts[0] == "artifacts":
         fail("artifact pointers take set, not append")
+    if (
+        parts
+        and parts[0] in ("gates", "tickets")
+        and parts[-1] in ("status", "decided_at", "override_reason", "evidence")
+    ):
+        fail("gate metadata is written by set or ticket, not append")
     if scope_id is not None:
         status = str(root.get("status") or "active")
         if status == "done":
@@ -3578,20 +3971,27 @@ def cmd_ticket(args: argparse.Namespace) -> None:
         "conditional",
     )
     if needs_reason:
-        reason = str(args.reason or node.get("override_reason") or "").strip()
+        reason = str(args.reason or "").strip()
         if not reason:
             fail(
                 f"ticket gate {args.gate} is {level}; "
                 f"a {args.status} needs --reason"
             )
+    if args.evidence is not None:
+        if not str(args.evidence).strip():
+            fail("--evidence must be a non-empty path")
+        if args.status not in ("passed", "overridden", "skipped"):
+            fail("--evidence applies to a decided gate, not open or blocked")
+        roots = _known_project_roots(args, path)
+        if roots:
+            candidate = Path(str(args.evidence))
+            if not candidate.is_absolute():
+                candidate = roots[0] / candidate
+            if not _inside(candidate, roots[0]):
+                fail("ticket gate evidence must stay inside the project root")
+        node["evidence"] = str(args.evidence)
     if args.status in ("passed", "overridden"):
-        if args.gate == "done" and statuses["review"] not in ("passed", "overridden"):
-            fail("build.done cannot be decided before build.review")
-        if (
-            args.status == "passed"
-            and args.gate == "done"
-            and statuses["review"] != "passed"
-        ):
+        if args.gate == "done" and statuses["review"] != "passed":
             fail(
                 "build.done requires a passed build.review; "
                 "an overridden review is not enough"
@@ -3619,6 +4019,10 @@ def cmd_ticket(args: argparse.Namespace) -> None:
     )
     if args.status in ("open", "blocked"):
         node["override_reason"] = None
+        # Reopening starts fresh work; evidence from the earlier decision is
+        # stale and must not keep satisfying the gate.
+        if args.evidence is None:
+            node.pop("evidence", None)
     elif args.reason:
         node["override_reason"] = args.reason
     elif args.status != "overridden":
@@ -3683,6 +4087,11 @@ def cmd_done(args: argparse.Namespace) -> None:
     workstream_id, workstream = workstream_root(data, args.workstream)
     if workstream.get("status") == "paused":
         fail("workstream is paused; resume it before closing")
+    if workstream.get("status") == "done":
+        fail(
+            "workstream is already done; reopen it with "
+            "set --path status --value active --reason <why> first"
+        )
     model = (data.get("bmad") or {}).get("model") or "unknown"
     track = workstream.get("track", "feature")
     size = workstream.get("size", "epic")
@@ -3739,13 +4148,27 @@ def cmd_done(args: argparse.Namespace) -> None:
             "cannot mark the workstream done; blocking gates: "
             + ", ".join(blocking)
         )
+    # A closed workstream has no active or pending phase. Every phase that
+    # reached this point has no blocking gate, so its status cache can be
+    # made terminal instead of leaving `build` active on a done workstream.
+    for phase in PHASES:
+        if phase == "close":
+            continue
+        node = (workstream.get("phases") or {}).get(phase)
+        if isinstance(node, dict) and node.get("status") in ("pending", "active"):
+            node["status"] = "done"
 
     project_root = (
         Path(expand_project_root(args.project_root, Path.cwd())).resolve()
         if getattr(args, "project_root", None)
         else _default_project_root(path)
     )
-    if project_root is not None and not project_root.is_dir():
+    if project_root is None:
+        fail(
+            "cannot infer the project root for a custom ledger path; "
+            "pass --project-root"
+        )
+    if not project_root.is_dir():
         fail(f"project root not found: {project_root}")
     artifacts = workstream.get("artifacts") or {}
     missing_evidence: list[str] = []
@@ -3808,10 +4231,78 @@ def cmd_done(args: argparse.Namespace) -> None:
                         )
                     continue
                 if not keys:
+                    # No artifact key exists for this gate. It still needs a
+                    # pointer: phase evidence is the only place the schema can
+                    # record one, and every entry there was just resolved.
+                    phase_evidence = (
+                        (workstream.get("phases") or {}).get(phase) or {}
+                    ).get("evidence") or []
+                    if not phase_evidence:
+                        missing_evidence.append(
+                            f"{gate_id} (no artifact key and no phase evidence)"
+                        )
                     continue
                 if not any(artifacts.get(key) for key in keys):
                     missing_evidence.append(f"{gate_id} (no artifact)")
-    elif any(artifacts.values()):
+        # Per-ticket gates carry their own evidence pointer now. Resolve every
+        # pointer that is present, and require one for an overridden ticket
+        # gate: an override alone must not close a ticket.
+        ticket_level_map = ticket_levels(track, size)
+        build_evidence = (
+            (workstream.get("phases") or {}).get("build") or {}
+        ).get("evidence") or []
+        for ticket_id, ticket in tickets.items():
+            if not isinstance(ticket, dict):
+                continue
+            ticket_gates = ticket.get("gates")
+            if not isinstance(ticket_gates, dict):
+                continue
+            for name in TICKET_GATES:
+                node = ticket_gates.get(name)
+                if not isinstance(node, dict):
+                    continue
+                pointer = node.get("evidence")
+                if pointer:
+                    candidate = Path(str(pointer))
+                    if not candidate.is_absolute():
+                        candidate = project_root / candidate
+                    try:
+                        candidate.resolve().relative_to(project_root.resolve())
+                    except ValueError:
+                        missing_evidence.append(
+                            f"build.{ticket_id}.{name}={pointer} "
+                            "(outside project root)"
+                        )
+                        continue
+                    if not candidate.is_file() or candidate.stat().st_size == 0:
+                        missing_evidence.append(
+                            f"build.{ticket_id}.{name}={pointer}"
+                        )
+                if (
+                    node.get("status") == "overridden"
+                    and ticket_level_map.get(name) in ("required", "conditional")
+                    and not pointer
+                    and not build_evidence
+                ):
+                    missing_evidence.append(
+                        f"build.{ticket_id}.{name} (overridden without evidence)"
+                    )
+    elif any(artifacts.values()) or any(
+        ((node or {}).get("evidence") or [])
+        for node in (workstream.get("phases") or {}).values()
+        if isinstance(node, dict)
+    ) or any(
+        ((gate or {}).get("status") in ("passed", "overridden"))
+        for phase in PHASES
+        for gate in (((workstream.get("gates") or {}).get(phase)) or {}).values()
+        if isinstance(gate, dict)
+    ) or any(
+        ((gate or {}).get("status") in ("passed", "overridden"))
+        for ticket in tickets.values()
+        if isinstance(ticket, dict)
+        for gate in ((ticket.get("gates") or {}).values())
+        if isinstance(gate, dict)
+    ):
         fail(
             "pass --project-root to validate artifact evidence for a "
             "custom ledger path"
@@ -3951,8 +4442,14 @@ def cmd_migrate(args: argparse.Namespace) -> None:
     model = (data.get("bmad") or {}).get("model") or "unknown"
     workstreams = data.get("workstreams") or {}
     changed: list[str] = []
+    skipped_workstreams: list[str] = []
     for workstream_id, workstream in workstreams.items():
         if not isinstance(workstream, dict):
+            continue
+        if str(workstream.get("status") or "active") in ("done", "paused"):
+            # Repairing a closed or paused workstream is a reopen decision,
+            # not a migration side effect.
+            skipped_workstreams.append(workstream_id)
             continue
         track = workstream.get("track", "feature")
         size = workstream.get("size", "epic")
@@ -4022,17 +4519,18 @@ def cmd_migrate(args: argparse.Namespace) -> None:
             workstream["tickets"] = {}
             changed.append(f"{workstream_id}.tickets")
         if track == "audit" and not workstream.get("tickets"):
+            synthetic_stamp = now_iso()
             workstream["tickets"]["audit"] = {
                 "title": "Audit",
                 "gates": {
                     "ticket": {
                         "status": "skipped",
-                        "decided_at": None,
+                        "decided_at": synthetic_stamp,
                         "override_reason": None,
                     },
                     "tests": {
                         "status": "skipped",
-                        "decided_at": None,
+                        "decided_at": synthetic_stamp,
                         "override_reason": None,
                     },
                     "review": {
@@ -4042,22 +4540,41 @@ def cmd_migrate(args: argparse.Namespace) -> None:
                     },
                     "done": {
                         "status": "skipped",
-                        "decided_at": None,
+                        "decided_at": synthetic_stamp,
                         "override_reason": None,
                     },
                 },
             }
             changed.append(f"{workstream_id}.tickets.audit")
         refresh_workstream(workstream, model)
+    reopened = [
+        entry for entry in changed if entry.endswith(".status->pending")
+    ]
+    if reopened and not str(getattr(args, "reason", None) or "").strip():
+        fail(
+            "migrate reopens "
+            + ", ".join(reopened)
+            + "; pass --reason to record why"
+        )
     data["updated"] = now_iso()
     save_plan(path, data)
     if changed:
+        detail = "migrate applied: " + "; ".join(changed)
+        if str(getattr(args, "reason", None) or "").strip():
+            detail += f" (reason: {args.reason})"
         append_memlog(
             resolve_memlog(data, args, path),
             "correction",
-            "migrate applied: " + "; ".join(changed),
+            detail,
         )
-    emit({"ok": True, "ledger": str(path), "changed": changed})
+    emit(
+        {
+            "ok": True,
+            "ledger": str(path),
+            "changed": changed,
+            "skipped_workstreams": skipped_workstreams,
+        }
+    )
 
 
 def _infer_project_root(ledger: Path) -> Path:
@@ -4193,9 +4710,14 @@ def cmd_reconcile(args: argparse.Namespace) -> None:
     orphan_total = 0
     missing_evidence_total = 0
     applied: list[str] = []
+    skipped_workstreams: list[str] = []
     for workstream_id, workstream in workstreams.items():
         if not isinstance(workstream, dict):
             continue
+        active = str(workstream.get("status") or "active") == "active"
+        writable = write and active
+        if write and not active:
+            skipped_workstreams.append(workstream_id)
         artifacts = workstream.get("artifacts") or {}
         missing = []
         orphans = []
@@ -4249,7 +4771,7 @@ def cmd_reconcile(args: argparse.Namespace) -> None:
                         {"phase": phase, "path": relative}
                     )
         applied_here: list[str] = []
-        if write:
+        if writable:
             for orphan in orphans:
                 artifacts[orphan["artifact"]] = orphan["path"]
                 applied_here.append(
@@ -4302,7 +4824,7 @@ def cmd_reconcile(args: argparse.Namespace) -> None:
             {item["phase"] for item in missing_evidence}
         )
         requires_reason: list[str] = []
-        if write:
+        if writable:
             model = (data.get("bmad") or {}).get("model") or "unknown"
             for gate_id in gates_to_block:
                 phase, _, name = gate_id.partition(".")
@@ -4380,6 +4902,7 @@ def cmd_reconcile(args: argparse.Namespace) -> None:
             "orphan_count": orphan_total,
             "missing_evidence_count": missing_evidence_total,
             "applied": applied,
+            "skipped_workstreams": skipped_workstreams,
             "write": write,
             "memlog": str(memlog),
         },
@@ -4482,7 +5005,7 @@ def cmd_verify_return(args: argparse.Namespace) -> None:
     git_dirty = None
     try:
         proc = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "--untracked-files=all"],
             cwd=str(project_root),
             capture_output=True,
             text=True,
@@ -4507,6 +5030,26 @@ def cmd_verify_return(args: argparse.Namespace) -> None:
         touched_paths.add(body.strip('"'))
     ledger_touched = ledger_rel in touched_paths or memlog_rel in touched_paths
     reasons: list[str] = []
+    def sha256_of(target: Path) -> str | None:
+        try:
+            return hashlib.sha256(target.read_bytes()).hexdigest()
+        except OSError:
+            return None
+
+    ledger_sha = sha256_of(path)
+    memlog_sha = sha256_of(memlog_path)
+    expected_ledger = str(getattr(args, "expect_ledger_sha", "") or "").strip().lower()
+    expected_memlog = str(getattr(args, "expect_memlog_sha", "") or "").strip().lower()
+    if expected_ledger and expected_ledger != ledger_sha:
+        reasons.append(
+            "ledger changed during the handoff "
+            f"(expected {expected_ledger}, found {ledger_sha})"
+        )
+    if expected_memlog and expected_memlog != memlog_sha:
+        reasons.append(
+            "audit trail changed during the handoff "
+            f"(expected {expected_memlog}, found {memlog_sha})"
+        )
     if status != "done":
         reasons.append(f"status is {status}")
     if not artifacts and not allow_empty:
@@ -4547,6 +5090,12 @@ def cmd_verify_return(args: argparse.Namespace) -> None:
             "decision",
             f"accepted an empty artifact list (reason: {args.reason})",
         )
+    if ok:
+        # Report the digests the next handoff must pass. The acceptance
+        # writes above changed the audit trail, so the pre-check digests are
+        # stale.
+        ledger_sha = sha256_of(path)
+        memlog_sha = sha256_of(memlog_path)
     emit(
         {
             "ok": ok,
@@ -4567,6 +5116,10 @@ def cmd_verify_return(args: argparse.Namespace) -> None:
             "git_dirty": git_dirty,
             "changed_files": changed,
             "ledger_touched": ledger_touched,
+            "ledger_sha256": ledger_sha,
+            "memlog_sha256": memlog_sha,
+            "expected_ledger_sha": expected_ledger or None,
+            "expected_memlog_sha": expected_memlog or None,
             "ledger": str(path),
             "memlog": str(memlog_path),
             "project_root": str(project_root),
@@ -4582,12 +5135,26 @@ def cmd_resize(args: argparse.Namespace) -> None:
     workstream_id, workstream = workstream_root(data, args.workstream)
     if workstream.get("status") == "done":
         fail("workstream is done; start a new workstream instead of resizing it")
+    if workstream.get("status") == "paused":
+        fail("workstream is paused; resume it before resizing")
     track = args.track or workstream.get("track", "feature")
     size = args.size or workstream.get("size", "epic")
     if track not in TRACKS:
         fail(f"unknown track {track!r}; choose one of {', '.join(TRACKS)}")
     if size not in SIZES:
         fail(f"unknown size {size!r}; choose one of {', '.join(SIZES)}")
+    if track == "audit":
+        real_tickets = sorted(
+            str(ticket_id)
+            for ticket_id in (workstream.get("tickets") or {})
+            if str(ticket_id) != "audit"
+        )
+        if real_tickets:
+            fail(
+                "cannot resize to track=audit while tickets exist ("
+                + ", ".join(real_tickets)
+                + "); replace the workstream or close those tickets first"
+            )
     model = (data.get("bmad") or {}).get("model") or "unknown"
     if track != "audit" and workstream.get("track") == "audit":
         audit_ticket = (workstream.get("tickets") or {}).get("audit")
@@ -4645,17 +5212,18 @@ def cmd_resize(args: argparse.Namespace) -> None:
                 tickets.pop("audit", None)
                 changed.append("tickets.audit removed")
     if track == "audit" and "audit" not in tickets:
+        synthetic_stamp = now_iso()
         tickets["audit"] = {
             "title": "Audit",
             "gates": {
                 "ticket": {
                     "status": "skipped",
-                    "decided_at": None,
+                    "decided_at": synthetic_stamp,
                     "override_reason": None,
                 },
                 "tests": {
                     "status": "skipped",
-                    "decided_at": None,
+                    "decided_at": synthetic_stamp,
                     "override_reason": None,
                 },
                 "review": {
@@ -4665,7 +5233,7 @@ def cmd_resize(args: argparse.Namespace) -> None:
                 },
                 "done": {
                     "status": "skipped",
-                    "decided_at": None,
+                    "decided_at": synthetic_stamp,
                     "override_reason": None,
                 },
             },
@@ -4733,6 +5301,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate = subparsers.add_parser("validate")
     validate.add_argument("--plan", required=True)
+    validate.add_argument("--project-root", default=None)
     validate.set_defaults(func=cmd_validate)
 
     summary = subparsers.add_parser("summary")
@@ -4744,6 +5313,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     set_cmd = subparsers.add_parser("set")
     set_cmd.add_argument("--plan", required=True)
+    set_cmd.add_argument("--project-root", default=None)
     set_cmd.add_argument("--workstream")
     set_cmd.add_argument("--path", required=True)
     set_cmd.add_argument("--value")
@@ -4757,6 +5327,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     append = subparsers.add_parser("append")
     append.add_argument("--plan", required=True)
+    append.add_argument("--project-root", default=None)
     append.add_argument("--workstream")
     append.add_argument("--path", required=True)
     append.add_argument("--value")
@@ -4767,11 +5338,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     ticket = subparsers.add_parser("ticket")
     ticket.add_argument("--plan", required=True)
+    ticket.add_argument("--project-root", default=None)
     ticket.add_argument("--workstream")
     ticket.add_argument("--id", required=True)
     ticket.add_argument("--gate", required=True)
     ticket.add_argument("--status", required=True)
     ticket.add_argument("--reason")
+    ticket.add_argument("--evidence")
     ticket.add_argument("--title")
     ticket.add_argument("--memlog")
     ticket.set_defaults(func=cmd_ticket)
@@ -4788,11 +5361,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     migrate = subparsers.add_parser("migrate")
     migrate.add_argument("--plan", required=True)
+    migrate.add_argument("--project-root", default=None)
+    migrate.add_argument("--reason")
     migrate.add_argument("--memlog")
     migrate.set_defaults(func=cmd_migrate)
 
     resize = subparsers.add_parser("resize")
     resize.add_argument("--plan", required=True)
+    resize.add_argument("--project-root", default=None)
     resize.add_argument("--workstream")
     resize.add_argument("--track", choices=TRACKS)
     resize.add_argument("--size", choices=SIZES)
@@ -4812,6 +5388,8 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--return", dest="return_json")
     verify.add_argument("--return-file")
     verify.add_argument("--project-root")
+    verify.add_argument("--expect-ledger-sha")
+    verify.add_argument("--expect-memlog-sha")
     verify.add_argument("--memlog")
     verify.add_argument("--accept-questions", action="store_true")
     verify.add_argument("--allow-empty-artifacts", action="store_true")
@@ -4820,6 +5398,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     log = subparsers.add_parser("log")
     log.add_argument("--plan", required=True)
+    log.add_argument("--project-root", default=None)
     log.add_argument("--memlog")
     log.add_argument("--type", default="event")
     log.add_argument("--text", required=True)

@@ -14,7 +14,9 @@ The conductor is menu-driven. Every activation and every transition ends with a 
 
 ## Dashboard
 
-Render it first, and keep it scannable. Compute each row's counts from `summary.phases[]` (`required_open`, `conditional_open`, `optional_open`), not from this example: the flat top-level lists are totals and include per-ticket gates. `plan.sprint` is required only for v6 `epic`/`project`; a `fix`/`trivial` workstream starts in Build. Mark a `blocked` gate distinctly from `open`.
+Render it first, and keep it scannable. Compute each row's totals from `summary.phases[]` (`required_open`, `conditional_open`, `optional_open`), not from this example: the flat top-level lists are totals and include per-ticket gates. `plan.sprint` is required only for v6 `epic`/`project`; a workstream whose track is `fix` or whose size is `trivial` starts in Build. Mark a `blocked` gate distinctly from `open`.
+
+When no ledger exists, do not render the phase menu. Show the short status (no ledger, no active workstream) and offer to start one; that satisfies the status-only path without inventing a workstream.
 
 ```text
 bmad-sdlc — <project>
@@ -51,7 +53,7 @@ Choose a phase:
   6. Status    — full status and artifact paths
   7. Switch    — change active workstream
   8. Help      — what the conductor is doing and why
-  q. Save and quit
+  q. Quit
 ```
 
 Mark the current phase with `→`. Mark locked phases with `·` and the missing required gate.
@@ -72,7 +74,7 @@ Plan — choose an action:
      UI is material — DESIGN.md and EXPERIENCE.md
      Gate: plan.ux (skipped: CLI only)
   4. Back
-  q. Save and quit
+  q. Quit
 ```
 
 Only list actions that are legal for the track and size. Mark the recommended action with `→`. Put required actions before optional ones, and the recommended action first within its group.
@@ -88,7 +90,7 @@ Natural language works, but these verbs are stable:
 | `status` | Show the dashboard and full artifact paths. |
 | `phase <name>` | Jump to a phase menu. |
 | `run <action id>` | Run a specific action (e.g., `run plan.stories`). |
-| `skip` | Skip the current gate; requires a reason when the gate is required or conditional. |
+| `skip` | Mark the current gate `skipped`; requires a reason when the gate is required or conditional. |
 | `override <reason>` | Set the current gate `overridden` with the reason supplied inline. |
 | `revise` | Return to the last action with new direction. |
 | `review` | Run `bmad-review` on the current artifact. |

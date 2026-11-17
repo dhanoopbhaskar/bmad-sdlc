@@ -7,7 +7,7 @@ A BMAD module built around one conductor skill that reads a committed ledger and
 
 ## Policy
 
-- Never edit vendor BMAD skills under `.agents/skills/bmad-*/`; `bmad-sdlc` is the sole exception. Customize with a sidecar: `_bmad/custom/<skill>.toml` (team, committed) or `<skill>.user.toml` (personal, ignored).
+- Never edit vendor BMAD skills under `.agents/skills/bmad-*/`; `bmad-sdlc` is the sole exception. Customize with a sidecar: `_bmad/custom/<skill>.toml` (team, committed) or `_bmad/custom/<skill>.user.toml` (personal, ignored).
 - Never edit `_bmad/_config/` or `_bmad/config.toml`; the BMAD installer owns them. Team config overrides go in `_bmad/custom/config.toml`.
 - Never hand-edit `.github/agents/*.agent.md`; they are rendered from the skills for the `github-copilot` IDE target.
 - Commit directly to `main`.

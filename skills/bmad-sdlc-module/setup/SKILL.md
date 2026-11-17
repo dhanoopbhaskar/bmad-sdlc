@@ -17,7 +17,7 @@ Install the conductor into a project's skills directory and register its module 
 
 1. **Confirm the target.** Resolve `{project-root}`. If `_bmad/` is absent, say the project has no BMAD install; the conductor can still be copied, but every BMAD action will be blocked until BMAD is installed. Ask whether to continue.
 
-2. **Choose the skills directory.** Use the argument if given. Otherwise prefer the directory that already contains BMAD skills: `.agents/skills` if it exists, else `.claude/skills` if it exists, else `.agents/skills`.
+2. **Choose the skills directory.** Use the argument if given. Otherwise prefer the directory that already contains BMAD skills: scan `.agents/skills`, `.claude/skills`, `.cline/skills`, `.bob/skills`, `.agent/skills`, and `.adal/skills` for a `bmad-*/SKILL.md` and pick the first that matches. If none matches, use `.agents/skills` if it exists, else `.claude/skills` if it exists, else `.agents/skills`. State which directory was chosen and why.
 
 3. **Copy the skill.** If a copy already exists, show its path and ask before replacing it. A replacement deletes local edits, so resolve the target first and refuse anything that is not a `skills/bmad-sdlc` directory:
    ```bash
@@ -46,14 +46,19 @@ Install the conductor into a project's skills directory and register its module 
    uv run --no-cache "{project-root}/<skills-dir>/bmad-sdlc/scripts/sdlc_plan.py" \
      detect --project-root "{project-root}"
    ```
-   The detector deliberately excludes the conductor from the `skills` list, so `bmad-sdlc` will not appear there; confirm the skill directory exists and read `model`. If `model` is `unknown`, BMAD is absent or its model is unrecognizable: report that as **plan-only until BMAD is installed** and continue. A plan-only install is valid; only delivery actions stay blocked.
+   The detector deliberately excludes the conductor from the `skills` list, so `bmad-sdlc` will not appear there; confirm the skill directory exists and read `model`. Names in `manifest_only` are declared by the installer but have no readable `SKILL.md` under a skill directory: report them as needing repair, not as ready. If `model` is `unknown`, BMAD is absent or its model is unrecognizable: report that as **plan-only until BMAD is installed** and continue. A plan-only install is valid; only delivery actions stay blocked.
 
 6. **Initialize the plan (optional).** If the user wants the conductor usable immediately and no ledger exists:
    ```bash
    uv run --no-cache "{project-root}/<skills-dir>/bmad-sdlc/scripts/sdlc_plan.py" \
-     init --project-root "{project-root}" --name "<project-name>" --track <track> --size <size>
+     init --project-root "{project-root}" \
+     --plan "<resolved ledger path>" --memlog "<resolved audit path>" \
+     --name "<project-name>" --track <track> --size <size> \
+     --default-track <default-track> --default-size <default-size>
    ```
-   Ask for the track and size, defaulting to `feature` and `one-session`. A `fix` or `audit` defaults to size `one-session`. On an existing ledger the same command appends a workstream and pauses the previously active one. If `_bmad/custom/bmad-sdlc.toml` (team) or `_bmad/custom/bmad-sdlc.user.toml` (personal) sets `ledger_path` or `memlog_path`, run `_bmad/scripts/resolve_customization.py` and pass the resolved `--plan` and `--memlog`; the command's defaults mirror the shipped `customize.toml`, not the override. Add `_bmad-output/sdlc/*.lock` and `_bmad-output/sdlc/.tmp/` to the target project's `.gitignore`; the helper leaves its lock files beside the ledger and the conductor uses `.tmp/` for scratch.
+   - **Track and size.** State both you inferred, with `feature` and `one-session` as the fallbacks; ask only when the signals conflict. A `fix` or `audit` defaults to size `one-session`.
+   - **Resolve customization first.** Read `_bmad/custom/bmad-sdlc.toml` (team) or `_bmad/custom/bmad-sdlc.user.toml` (personal) with `_bmad/scripts/resolve_customization.py`, and pass its `default_track`, `default_size`, `ledger_path`, and `memlog_path`. The command's built-in defaults mirror the shipped `customize.toml`, not the override.
+   - **Housekeeping.** The ledger and audit trail must resolve inside the project root; on an existing ledger the same command appends a workstream and pauses the previously active one. Add the resolved ledger directory's `*.lock` and `.tmp/` entries to the target project's `.gitignore` (by default `_bmad-output/sdlc/*.lock` and `_bmad-output/sdlc/.tmp/`).
 
 7. **Confirm.** Report:
    - skill path and installed version (`<skills-dir>/bmad-sdlc/VERSION` against `{module-root}/module.yaml`)

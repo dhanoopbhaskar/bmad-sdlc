@@ -23,7 +23,7 @@ Instead of choosing among `bmad-prd`, `bmad-architecture`, `bmad-create-epics-an
 
 ## What BMAD is
 
-BMAD is an **agentic agile delivery framework**: named personas own phases, each persona advances a different unit of work, and each phase leaves artifacts the next phase consumes. The core loop is **Clarify → Plan → Build and verify → Learn and adjust**, right-sized into trivial, one-session, epic, and project. `docs/bmad-sdlc.md` §5–§6 has the path and persona tables.
+BMAD is an **agentic agile delivery framework**: named personas own phases, each persona advances a different unit of work, and each phase leaves artifacts the next phase consumes. The core loop is **Clarify → Plan → Build and verify → Learn and adjust**, right-sized into trivial, one-session, epic, and project. `docs/bmad-sdlc.md` §5 has the path and persona tables.
 
 The repository has **v6.12.4** installed (`bmad-help`, epics/stories, `sprint-status.yaml`), while the current BMAD docs describe a newer model (`bmad` hub, Sofia `bmad-agent-po`, `tickets.toml`). `bmad-sdlc` detects which one is present and routes accordingly.
 
@@ -124,7 +124,7 @@ _bmad-output/sdlc/               # runtime ledger + audit trail
 
 ## Verify
 
-The ledger regression suite and the exact commands are in `AGENTS.md` §Running and verifying; the eval commands and their limitations are in `evals/README.md`. No installer-managed `_bmad/` files are modified. Run `detect` to read the current model, hub, and test style rather than relying on a recorded example.
+The ledger regression suite and the exact commands are in `AGENTS.md` §Running and verifying; the eval commands and their limitations are in `.agents/skills/bmad-sdlc/evals/README.md`. No installer-managed `_bmad/` files are modified. Run `detect` to read the current model, hub, and test style rather than relying on a recorded example.
 
 ---
 

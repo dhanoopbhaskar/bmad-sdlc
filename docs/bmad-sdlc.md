@@ -1,6 +1,6 @@
 # bmad-sdlc — Design and Build Plan
 
-**Status:** agreed, in build
+**Status:** built. Design agreed 2026-11-12; D26 added 2026-11-16.
 **Created:** 2026-11-12
 **Purpose:** a single front-door skill that conducts the whole BMAD SDLC across product, design, architecture, development, testing, and close-out, with a plan that survives session restarts. The build checklist, builder gate results, and review-fix detail live in `docs/bmad-sdlc-build.memlog.md`; this document keeps the decisions, architecture, acceptance criteria, and risks.
 
@@ -34,7 +34,7 @@ One skill, `bmad-sdlc`, that the user invokes for the entire lifecycle. It:
 
 ## 4. Decision log
 
-Decisions made with the user on 2026-11-12. Each is binding for this build unless explicitly reopened.
+D1–D25 were decided with the user on 2026-11-12; D26 was added on 2026-11-16. Each is binding for this build unless explicitly reopened.
 
 | # | Decision | Choice |
 |---|---|---|
@@ -48,11 +48,11 @@ Decisions made with the user on 2026-11-12. Each is binding for this build unles
 | D8 | Ledger granularity | **Per product, multi-workstream.** One file with many initiatives/workstreams. |
 | D9 | Interaction | **Menu-driven.** Two levels: phase, then action. |
 | D10 | Guardrails | **Ask at every gate.** Plus consent for irreversible actions. |
-| D11 | bmad-loop role | **Build-first, loop optional.** Use `bmad-build`; offer `bmad-loop` for batches. |
+| D11 | bmad-loop role | **Build-first, loop optional.** Use `bmad-build`; for batches use `build.loop` (`bmad-build-auto`). Partly superseded by D26. |
 | D12 | Advisory skills | **Optional at relevant gates.** Party mode, elicitation, deep recon, CIS. |
 | D13 | Tracks | *Merged into D2.* |
 | D14 | Default gates | **Lean required, conditional rest.** Required: spec/PRD, epics+stories, sprint plan (v6), build ticket, code review, trace. Conditional: UX, architecture, test design/framework/CI. Optional: the rest. *Review refinement:* levels are resolved from track/size/model, so `trivial` skips planning and trace, and `audit` starts at review. |
-| D15 | Unit of advancement | **Persona-dependent, per BMAD docs.** See §6. |
+| D15 | Unit of advancement | **Persona-dependent, per BMAD docs.** See §5. |
 | D16 | End of flow | **Retro per epic, then continue** to the next epic/initiative. |
 | D17 | Ledger location | **`_bmad-output/sdlc/`, committed.** |
 | D18 | Name | **`bmad-sdlc`.** |
@@ -71,17 +71,11 @@ From `docs.bmad-method.org` (current) and the installed v6.12.4 skills:
 
 - The delivery loop is **Clarify → Plan → Build and verify → Learn and adjust**. Every path runs the same loop; bigger work enters earlier.
 - Four right-sized paths: **trivial** (edit → verify), **one-session** (intent → Build), **epic** (spec → stories → Build × stories → integrate → retro), **project** (shared contracts → epics repeated → integrated product).
-- **Personas advance different units.** This is the key correction to a naive "story is the unit" design.
+- **Personas advance different units.** This is the key correction to a naive "story is the unit" design. The conductor does **not** force one unit: it tracks the artifact each persona owns and advances the smallest unit that persona owns. The eight role labels, the persona each maps to, and what each owns are listed once in `references/phase-map.md` §Role labels.
 - Current model: `bmad` hub, `bmad-agent-po` (Sofia) owns the ticket tree (`tickets.toml`, `R<n>` requirements), `bmad-build` builds one ticket per session and leaves status at `built`; the human or orchestrator marks it `done`; `bmad-retrospective` closes an epic.
-- Installed v6.12.4 model: `bmad-help` hub, `bmad-create-epics-and-stories`, `bmad-sprint-planning` writes `sprint-status.yaml`, `bmad-build` syncs sprint status.
+- Installed v6.12.4 model: `bmad-help` hub, `bmad-create-epics-and-stories`, `bmad-sprint-planning` writes `sprint-status.yaml`, `bmad-build` syncs sprint status. In the v6 model, the Product Owner role is split across `bmad-create-epics-and-stories` (epics/stories) and `bmad-sprint-planning` (tracking).
 
-## 6. Unit of advancement (persona-dependent)
-
-The conductor does **not** force one unit. It tracks the artifact each persona owns and advances the smallest unit that persona owns. The eight role labels, the persona each maps to, and what each owns are listed once in `references/phase-map.md` §Role labels.
-
-In the v6 model, the Product Owner role is split across `bmad-create-epics-and-stories` (epics/stories) and `bmad-sprint-planning` (tracking).
-
-## 7. Architecture
+## 6. Architecture
 
 The annotated repository tree is in `README.md` §Repository layout; the contract lives in `SKILL.md` and the six reference files. The binding constraints:
 
@@ -90,13 +84,13 @@ The annotated repository tree is in `README.md` §Repository layout; the contrac
 | Activation | `SKILL.md` §On Activation | Detection is project-local; a status-only request never creates a ledger; a corrupt ledger is validated and repaired, not discarded. |
 | Core loop | `SKILL.md` §The loop; `handoff-protocol.md` | A menu choice, a resolved action, a handoff, `verify-return`, a ledger write, then the four-way gate. |
 | Tracks and sizing | `phase-map.md` | Gate levels resolve from track, size, and model, so a trivial fix is never sent to a PRD. |
-| Gates | `gate-matrix.md` | The file is the written authority; the script resolves levels and `summary` is authoritative at runtime. |
+| Gates | `references/gate-matrix.md` | `gate-matrix.md` defines gate levels in prose; `summary` resolves track/size/model and wins at runtime. Drift is reported, never silently resolved. |
 | Handoff | `handoff-protocol.md` | A fresh subagent is preferred; it never edits the ledger; `verify-return` rejects artifacts outside `{project-root}`. |
 | Ledger | `ledger-schema.md` | It stores only what BMAD does not; BMAD artifacts stay the source of truth for ticket status; every write is logged. |
 | Version adapters | `version-adapters.md` | Detection is project-local; the model is never guessed; a missing skill is blocked, never substituted with an invented name. |
 | Guardrails | `SKILL.md` §Guardrails | Every override is logged; irreversible actions need consent; a success claim is checked against the filesystem. |
 
-## 8. Acceptance criteria
+## 7. Acceptance criteria
 
 1. A user who knows nothing about BMAD can invoke `bmad-sdlc` and get a correct next action with a menu.
 2. The skill detects v6 vs current and routes to skills that actually exist; missing skills produce a clear, actionable message.
@@ -108,7 +102,7 @@ The annotated repository tree is in `README.md` §Repository layout; the contrac
 8. An audit advances from `build.review` through `verify.*` to `close.mark_done`; a trivial fix does not loop on `build.ticket`.
 9. No installer-managed file is modified; the local skill works immediately, and the module packaging is additive.
 
-## 9. Risks and open questions
+## 8. Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -117,8 +111,4 @@ The annotated repository tree is in `README.md` §Repository layout; the contrac
 | Over-orchestration / too many prompts | Lean required gates; optional gates are one keystroke to skip; the `trivial` size short-circuits. |
 | Subagent unavailability | Inline and user-run fallbacks; mark blocked with a reason. |
 | Skill name collisions with future BMAD releases | `bmad-sdlc` is descriptive; module packaging uses its own prefix. |
-| Context-rot in long runs | Fresh subagent per skill; step files and references loaded JIT. |
-
-Open questions (deferred, not blocking):
-
-- None. The `bmad-loop` question is closed by D26.
+| Context-rot in long runs | Fresh subagent per skill; `SKILL.md` and the reference files loaded JIT. |

@@ -37,7 +37,7 @@ updated: 2026-11-12T20:30
 - (correction) the live audit trail's 52/52 rubric-row claim is marked unbacked; quality mode does not grade.
 - (correction) the 20/20 quality-expectation, 9/9 case, and 43/43 rubric-row scores in this log are historical and unbacked by a committed grading.json. Quality mode does not grade. The 2026-11-13 review run graded 10 cases at 60/62 expectations (2 failures: `build.ticket` vs `build.unblock`); its transcripts and grading.json files live under the run directory, and the findings are in `_bmad-output/reviews/`.
 - (correction) the Analyze report path under `.analysis/` is gitignored, so the "fair, 0 critical / 8 high / 15 medium / 7 low" grade cannot be audited from the repository.
-- (correction) the 14, 29, 54, and 70 test counts below are historical. The authoritative current count is in `AGENTS.md` §Running and verifying.
+- (correction) the 14, 29, 54, and 70 test counts below are historical. The authoritative current count is in §8.6; `AGENTS.md` §Running and verifying has the command that produces it.
 - (event) 2026-11-13 review fixes: 109 findings from five lenses (adversarial, edge-case, verification-gap, structure, prose); code, docs, evals, and packaging updated; `package.sh --check` added; suite grew to 94 tests.
 - (correction) the 2026-11-13 re-check of the two failing eval cases did not complete: the provider returned HTTP 402 Insufficient Balance. The doc fix that keeps the intended action id is therefore not yet verified by a live eval run; re-run `fix-trivial` and `fix-one-session` when credit is available.
 
@@ -81,14 +81,14 @@ The skill was built before the conductor existed, so the formal `bmad-workflow-b
 | `quick_validate.py` | pass — no errors |
 | `prepass-workflow-integrity.py` | pass — no issues (after adding `## Overview`) |
 | `scan-scripts.py` | pass — no findings (after switching to `json.dumps` and `sys.exit`) |
-| `prepass-prompt-metrics.py` | 2,497 SKILL.md tokens; budget 2,500 — within budget, above the desired 1,500 tier |
+| `prepass-prompt-metrics.py` | 2,495 SKILL.md tokens (budget 2,500) and 4,412 `ledger-schema.md` tokens (multi-branch budget 4,500) — both within budget, above the desired 1,500 tier |
 | `scan-path-standards.py` | pass — the authoring `.memlog.md` moved to `docs/bmad-sdlc-build.memlog.md` and is excluded from packaging |
 | Eval beat | The ten quality cases run headless for the routing cases and reach `build.ticket`; the audit case reports `blocked` when no review skill is installed, and `continue-with-ledger` resumes the staged workstream and its recorded gate. Quality mode captures transcripts but does not grade them, so a score is only valid with its grader output beside the run; do not cite a rubric count without that artifact. Trigger mode remains unusable with the stock opencode adapter (tool-event shape), and case metadata can be read from above `cwd`; the skill's guardrails forbid reading it. See `.agents/skills/bmad-sdlc/evals/README.md`. |
 | Analyze lenses | **fair** — 0 critical / 8 high / 15 medium / 7 low; the high findings and the gate/path issues are fixed |
 | Second review pass | Blocking state-machine and eval issues fixed; 54 ledger tests passed. |
 | Third review pass | Guardrails, evidence, routing, the audit trail, and doc drift fixed; 70 ledger tests pass. |
 
-The build-process memlog records the decisions, the build event, the lint gate, the review, and the fixes. It is the resume trail for the next builder session.
+The build-process memlog records the decisions, the build event, the lint gate, the review, and the fixes. It records how the build was done; resume from the ledger, not from this file.
 
 #### 8.2 Review fixes (2026-11-12)
 
@@ -110,3 +110,25 @@ Round 7 re-ran the quality suite against HEAD (the round-6 run predated the 2026
 Fixes: `ledger-schema.md` §Summary now documents what `summary` actually emits for gates in a done/skipped phase, and §Hand-edit fallback requires the field rules plus a logged hand edit; `SKILL.md` allows scratch only beside the ledger (`_bmad-output/sdlc/.tmp/`), requires naming scratch files, copies `next_action`/`optional_actions`/`open_gates`/`blocked_gates`/`locked_phases` verbatim from `summary`, and no longer presents a gate from an unvalidated hand edit; `build.loop` resolves to `bmad-build-auto` because `bmad-loop` is a tool, not a skill (D26, open question closed); `default_size` and the `init` fallback are `one-session`, matching `phase-map.md` §Sizing; the description covers the "one skill to run PRD, architecture, build, and tests" query. Eval contract: the three shape-only rows were tightened, every ledger-writing case gained a block-vs-`summary` fidelity row, and the new `fix-trivial-ready` case stages a v6 install as files so `status: ready` is exercised for the first time.
 
 Grading that round exposed a helper bug the suite had missed: `optional_actions` offered actions from phases `summary` simultaneously reported in `locked_phases` (for example `close.retro` while close waited on `build.ticket`). `optional_actions` now walks phases in order and stops offering once a phase is locked, mirroring the `locked_phases` rule, with a regression test for both the locked and unlocked states. The suite is 182 cases; VERSION and `module.yaml` are 0.2.2.
+
+#### 8.5 Round-8 review fixes (2026-11-17)
+
+Round 8 reviewed the whole skill package with the five lenses and ran the 11 quality evals. The 87/90 row count recorded here was not backed by grading artifacts on disk and is withdrawn. Round 9 re-ran the same 11 cases immediately before fixing: 110/112 expectations passed; the two failures were `status-empty` (it deferred size instead of naming the configured default) and `fix-trivial-ready` (a symlinked skill path resolved outside the project root). Every behavioral finding was reproduced before fixing.
+
+Helper: `verify-return` accepts `--expect-ledger-sha`/`--expect-memlog-sha` and rejects a handoff that edited either file (git status stays advisory and now sees untracked files); `done` rejects a second close, refuses a decided gate with no artifact key and no phase evidence, refuses a custom path without `--project-root`, requires a passed review for a passed or overridden ticket `done`, and validates ticket-gate evidence, which `ticket --evidence` now writes; `resize` refuses paused workstreams and audit track changes that would strand real tickets; `migrate` requires `--reason` when it reopens a phase; `init` keeps the ledger and audit trail inside the project root and always records a relative `bmad.memlog`; `set` pins `schema`, refuses evidence loss on a whole-phase replace, and the mutating commands accept `--project-root`; `summary` reports the latest-updated workstream when none is active, compares the full next-action identity for `next_action_stale`, and resolves installed skill alternatives (`bmad-agent-pm`, `bmad-build` for review, `bmad-tea`); `detect` reports manifest names with no readable `SKILL.md` as `manifest_only` while still counting the installer's declaration.
+
+Docs: corrected the `summary --plan` activation command and the `init --default-track/--default-size` call, the audit level cells, the conditional-gate reason wording, the plan-only wording, the ledger/memlog terminology, the status line and D11, and merged §6 into §5. The eval README no longer says quality mode grades, and the rubric now copies `optional_actions` verbatim. The suite is 202 cases; VERSION and `module.yaml` are 0.3.0.
+
+#### 8.6 Round-9 review fixes (2026-11-17)
+
+Round 9 reviewed the current package with the five lenses and the 11 quality evals; the findings are in `_bmad-output/reviews/2026-11-17-bmad-sdlc-r9.md` and `.findings.json` (82 findings: 15 adversarial, 10 edge-case, 8 verification-gap, 31 structure, 18 prose).
+
+Behavior:
+
+- **Audit trail.** A recorded relative `bmad.memlog` resolves against the project root (or the nearest ancestor that holds it), never against `ledger.parent`; explicit and recorded paths are refused outside a known project root; `set --path bmad --replace` applies the same containment.
+- **Write-path parity.** `migrate` and `reconcile --write` skip done/paused workstreams; `append` refuses gate metadata; `ticket --evidence` and `set` require an existing decided gate and enforce project-root containment; whole-ticket and gate-node replacement cannot drop a decided gate's evidence or forge/erase `decided_at`; reopening a gate clears the stale evidence pointer; `set` no longer trusts a stored override reason for a new decision.
+- **Lifecycle.** `done` makes every phase terminal; `bmad.model` changes refuse done/paused workstreams and `init` does the same; `validate` rejects a decided gate without `decided_at` and a malformed ticket evidence; `set` type-checks `project`, `created`, `updated`, and `current_phase`.
+- **Summary.** Alternatives resolve by gate, so `plan.stories` cannot fall back to `bmad-spec`; `skill_manifest_only` is computed from the chosen skill; `verify-return` reports post-write digests; the synthetic audit ticket carries `decided_at`.
+- **Docs.** Moved Headless to `references/headless.md`; `SKILL.md` is 2,495 tokens and `ledger-schema.md` is 4,412; corrected the recorded audit-path wording, the eval README count, the `{repo}` placeholder, the `step files` phrase, the version-adapters column names, the menu track/size wording, the setup `--plan`/`--memlog` invocation and `.gitignore` path, the memlog resume-trail claim, and the stale token counts.
+
+Verification: **224/224** unittest cases pass; `package.sh --check` in sync; validators clean; the re-run quality evals graded **109/112**. The pre-fix failures in `status-empty` and `fix-trivial-ready` are gone. The three remaining failures are path isolation in the harness: `continue-with-ledger` two rows for a `../../../_bmad` resolution through the skill symlink, and `start-greenfield` one row for a scratch file written to `/tmp`. Both are documented harness/model limits, not code paths; the skill's guardrails forbid them and `references/headless.md` now names the system temp directory explicitly.

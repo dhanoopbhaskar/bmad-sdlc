@@ -19,8 +19,8 @@ A gate is a checkpoint between the conductor and the human. The ledger records t
 | `plan.requirements` | required for `epic`/`project`; conditional for `one-session`; optional for `trivial` and any `fix` | `epic`/`project`; `one-session` when the intent is not already well-defined; not required for `trivial` or a `fix` with a clear ticket | `SPEC.md` or a PRD | The artifact states why, what, constraints, non-goals, and a success signal; open questions are listed. |
 | `plan.stories` | required for non-`fix` `epic`/`project`; conditional for a non-`fix` `one-session` and a `fix` `epic`/`project`; optional for `trivial` and a `fix` `one-session` | `epic`/`project`; a single ticket satisfies it for `fix`/`one-session` | v6: epics + stories. Current: `tickets.toml` | Stories/tickets are ordered, each has a deliverable and a verification, and dependencies are named. |
 | `plan.sprint` | required for v6 `epic`/`project` (not `fix`); optional otherwise | v6 model installed | `sprint-status.yaml` | Valid status file; every story has a legal status; the readiness check is PASS or CONCERNS with named risks. |
-| `plan.ux` | conditional unless `trivial` or `fix`, then optional | UI is material to the product | `DESIGN.md` + `EXPERIENCE.md` | Both documents exist and cover the primary flows; design/experience agree. |
-| `plan.architecture` | conditional for `epic`/`project` (not `fix`); optional otherwise | 2+ units must adopt a decision | `architecture-*.md` | Shared decisions are recorded with trade-offs; no unresolved contradiction across units. |
+| `plan.ux` | conditional unless `trivial`, `fix`, or `audit`, then optional | UI is material to the product | `DESIGN.md` + `EXPERIENCE.md` | Both documents exist and cover the primary flows; design/experience agree. |
+| `plan.architecture` | conditional for `epic`/`project` (not `fix` or `audit`); optional otherwise | 2+ units must adopt a decision | `architecture-*.md` | Shared decisions are recorded with trade-offs; no unresolved contradiction across units. |
 | `solution.test_design` | conditional for `epic`/`project` (not `fix`); optional otherwise | No test baseline, high risk, or multi-surface | Test design document | Risks are ranked; test levels and environments are named; coverage targets exist. |
 | `solution.framework` | conditional for `epic`/`project` (not `fix`); optional otherwise | No framework installed | Framework scaffold | The project can run the framework's smoke test. |
 | `solution.ci` | conditional for `epic`/`project` (not `fix`); optional otherwise | No CI quality pipeline | CI config | Tests run in CI; the pipeline fails on test failure. |
@@ -34,7 +34,9 @@ A gate is a checkpoint between the conductor and the human. The ledger records t
 | `close.retro` | optional (recommended per epic) | Epic finished | Retro document + verdict | Findings cite evidence; action items have owners; verdict is accept/reject. |
 | `close.walkthrough` | optional | A human should review the change | Walkthrough | The user has seen purpose, hot spots, and how to test. |
 
-`build.ticket`, `build.tests`, `build.review`, and `build.done` are per-ticket. Record them under `tickets.<id>.gates` with the `ticket` script command. The ledger stores per-ticket gate outcomes and a pointer to the evidence; it does not duplicate ticket status.
+The `Condition` column guides the human deciding whether a gate applies; the conductor cannot evaluate it. The `Level` column is the resolved answer for the current track, size, and model, and `summary` wins if the stored copy disagrees.
+
+`build.ticket`, `build.tests`, `build.review`, and `build.done` are per-ticket. Record them under `tickets.<id>.gates` with the `ticket` command; each gate node may carry an `evidence` pointer, and `done` resolves it. The ledger stores gate outcomes, not ticket status.
 
 An `audit` has no build tickets: its required code review is the `review` gate on the synthetic `audit` ticket. For an `audit`, every `plan.*` gate resolves to `optional`, `verify.trace` is required regardless of size, and `verify.nfr` / `verify.test_review` are conditional.
 
@@ -47,14 +49,14 @@ The ledger effect of each choice:
 1. **Approve** → set the gate `passed`, record `decided_at`, log an event, advance if the phase is complete.
 2. **Revise** → return to the action with the user's direction; re-run or patch; re-present the gate.
 3. **Run reviewer** → invoke `bmad-review` (or the conditional test review) with the artifact; fold the findings into the summary and re-present. This does not pass the gate by itself.
-4. **Skip with override** → require a reason. Set the gate `overridden`, store `override_reason` and `decided_at`, log the override, and continue. A required gate may be overridden; never hide it.
+4. **Skip with override** → require a reason. Set the gate `overridden`, store `override_reason` and `decided_at`, log the override, and continue. A required gate may be overridden; never hide it. (`skipped` is a separate status: use it only for an optional gate or when the phase itself is being skipped; a required or conditional skip also needs a reason.)
 
 ## Override rules
 
 - A gate whose evidence pointer is missing is `blocked`, not `open`. Offer either **resolve the artifact/pointer** or **override with a reason**; never advance past it silently.
-- Never mark a ticket `done` on an override alone; the artifact must still exist or the user must explicitly accept the gap. The script refuses `done` before a passed `review`, and `review` before a passed `ticket` on non-audit work.
+- Never mark a ticket `done` on an override alone; the artifact must still exist or the user must explicitly accept the gap. The script refuses `done` unless `review` passed (an overridden review is not enough), and refuses `review` before a passed `ticket` on non-audit work. An overridden ticket gate needs an `evidence` pointer, or the build phase must carry evidence.
 - An override always needs a reason. The `set` and `ticket` commands reject an override on a required or conditional gate without `--reason`, and `validate` fails on one that slipped in.
-- A required or conditional gate set to `skipped` is an override and also needs a reason. The conductor cannot evaluate the `Condition` column, so it asks for the reason on every required or conditional skip instead of guessing.
+- A required or conditional gate set to `skipped` is an override and also needs a reason.
 - Optional gates: skipping is normal; record `skipped` and no reason.
 - Required gates: an override is allowed but must be visible in the next status menu and in the close summary.
 
@@ -63,18 +65,19 @@ The ledger effect of each choice:
 Changing a decided gate (`passed`, `overridden`, or `skipped`) to any status, including back to `passed`, needs `--reason`. Use `set` for a phase gate, `ticket` for a per-ticket gate, or the `reopen` menu verb.
 
 - `open` returns the gate to work. It is refused while a later ticket gate is decided, or while its phase is `done`/`skipped`; reopen the phase first.
-- `blocked` records missing evidence and is not a decision: it carries no `override_reason` or `decided_at`.
+- `blocked` records missing evidence and is not a decision: it carries no `override_reason` or `decided_at`. Any `--reason` required to move a decided gate is logged to the audit trail only.
 - A gate on a done workstream cannot be written. Reopen the workstream with `set --workstream <id> --path status --value active --reason <why>`, then reopen its phases and gates in order.
 - Reopening a phase from `done`/`skipped` to `active`/`pending` also needs `--reason`.
 
 ## Phase completion
 
-A phase is `done` when every required gate is `passed`, `overridden`, or `skipped`; every conditional gate is decided with a reason; and no gate in the phase is `blocked`.
+A phase is `done` when every required gate is `passed`, `overridden`, or `skipped`; every conditional gate is decided the same way; an overridden or skipped required/conditional gate carries a reason; and no gate in the phase is `blocked`.
 
 `done` closes the workstream only when:
 
 - no required or conditional gate is open or blocked, including per-ticket gates and a missing audit review;
-- every decided required or conditional gate has an artifact pointer that resolves;
+- every decided required or conditional gate has an artifact pointer that resolves, or, for a gate with no artifact key, a phase evidence entry that resolves;
+- an overridden ticket gate carries its own `evidence` pointer or the build phase carries evidence;
 - `plan.ux` has both `DESIGN.md` and `EXPERIENCE.md`;
 - an intentional gap carries `--accept-missing-evidence` or `--accept-missing-tickets` plus `--reason`;
 - an audit's synthetic ticket is exempt from the ticket-overlay check.

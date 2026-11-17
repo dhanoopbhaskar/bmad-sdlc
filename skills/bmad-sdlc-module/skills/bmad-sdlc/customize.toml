@@ -30,12 +30,14 @@ memlog_path = "{project-root}/_bmad-output/sdlc/.memlog.md"
 ledger_template = "assets/plan-template.yaml"
 
 # Used only when the track cannot be detected from the request or the repo.
+# Passed to init as --default-track so the value actually takes effect.
 default_track = "feature"
 
 # Used only when the size cannot be detected. One of:
 # trivial | one-session | epic | project
 # Prefer the smaller size and promote later (phase-map.md §Sizing).
 # A fix or audit defaults to one-session regardless of this value.
+# Passed to init as --default-size.
 default_size = "one-session"
 
 # When false, activation runs headless: no questions, no menu, emit a JSON

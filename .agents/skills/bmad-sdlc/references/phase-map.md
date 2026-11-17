@@ -2,7 +2,7 @@
 
 This is the reference for track, size, phase, action, and legal-now questions. Load it whenever the user picks a phase.
 
-Gate levels are resolved by `scripts/sdlc_plan.py` from track, size, and model; `summary` is authoritative. `resize` recomputes them after a size or track change. `greenfield` and `feature` share the same levels; only `fix` and `audit` narrow them.
+Gate levels are resolved by `scripts/sdlc_plan.py` from track, size, and model; `summary` is authoritative. `resize` recomputes them after a size or track change. `greenfield` and `feature` share the same levels; only `fix`, `audit`, and the `trivial` size narrow them.
 
 ## Contents
 
@@ -39,7 +39,7 @@ BMAD's four right-sized paths. Size decides how many actions and gates apply, no
 | `trivial` | Obvious, low risk, one small edit, reviewer can self-check. | Short-circuit: `build.ticket` → `build.review` → `build.done`. Skip planning and verification gates. |
 | `one-session` | One coherent implementation unit, roughly one Build session. | `frame.spec` (or direct intent) → `build.ticket` → `build.review` → `build.done` → `verify.*` as needed. |
 | `epic` | One outcome needing several Build sessions. | Plan → stories → Build × stories → verify → retro. |
-| `project` | Several epics or roughly 20+ sessions, or multiple teams/systems. | Shared contracts (PRD, UX, architecture) → epics repeated → integrated product. |
+| `project` | Several epics or about 20 or more sessions, or multiple teams/systems. | Shared contracts (PRD, UX, architecture) → epics repeated → integrated product. |
 
 When two sizes both fit, choose the smaller and promote later. The user can resize at any gate. A `fix` or `audit` with no explicit size is `one-session`, even when a configured default size exists. The `audit` track ignores size: `verify.trace` stays required even at `trivial`.
 
@@ -81,7 +81,7 @@ Notes:
 - `plan.requirements` is satisfied by `frame.spec` or `plan.prd`. Do not require both.
 - `plan.ux` and `plan.architecture` are conditional. The conductor names the condition; the user can skip with an override.
 - In the current model, `plan.stories` and `plan.sprint` collapse into Sofia's ticket tree (`tickets.toml`). Do not ask for a separate sprint plan.
-- `plan.stories` for a `fix` may be a single ticket or a direct build intent; record that in the ledger note. A one-session fix treats it as optional and starts at `build.ticket`.
+- `plan.stories` for a `fix` is either a single ticket or a direct build intent; record which in `phases.plan.note`. A one-session fix treats `plan.stories` as optional and starts at `build.ticket`.
 - A fix never inherits the epic planning set.
 - **Required before conditional.** `summary`'s `next_action` recommends a required gate before a conditional one. Conditional gates are available early: `optional_actions` exposes them, and the user may take UX, architecture, or test setup before stories. The per-track flows show a natural order, not a lock.
 
@@ -95,7 +95,7 @@ Decide how the work will be verified before building. The phase gates are condit
 | `solution.framework` | test-architect | `bmad-testarch-framework` | `bmad-tea` | `solution.framework` |
 | `solution.ci` | test-architect | `bmad-testarch-ci` | `bmad-tea` | `solution.ci` |
 
-If the project already has a mature test stack and CI, skip the phase with a recorded reason. Do not skip silently.
+If the project already has a mature test stack and CI, decide the solution gates `skipped` with a reason, record it in `phases.solution.note`, and only then mark the phase `skipped`. Do not skip silently.
 
 ## Build phase
 

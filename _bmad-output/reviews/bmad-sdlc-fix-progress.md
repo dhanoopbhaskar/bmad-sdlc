@@ -316,3 +316,13 @@ Status: **85 addressed, 1 deferred, 1 partial**. No behavior finding was left op
 - `package.sh --check` reports the module copy in sync; `VERSION` and `module.yaml` are **0.2.1**.
 - `quick_validate`, `prepass-workflow-integrity`, `scan-path-standards`, `scan-scripts`, and `prepass-prompt-metrics` are clean; `SKILL.md` is 2,500 tokens (budget 2,500).
 - The live `_bmad-output/sdlc/plan.yaml` validates with no errors or warnings; `detect` reports v6, hub `bmad-help`, test style `bmad-tea`.
+
+## Round 9 fixes (2026-11-17)
+
+Source: `2026-11-17-bmad-sdlc-r9.md` / `.findings.json` (82 findings: 15 adversarial, 10 edge-case, 8 verification-gap, 31 structure, 18 prose).
+
+- **Behavior (adversarial 15, edge-case 10):** fixed in `scripts/sdlc_plan.py`. The clusters were audit-trail resolution and containment, write-path parity (`migrate`, `reconcile --write`, `append`, `set`, `ticket`), decided-gate evidence and `decided_at`, model changes on done/paused workstreams, gate-aware skill alternatives, `manifest_only`, post-write handoff digests, and `done` phase termination. No behavioral finding was deferred.
+- **Verification gaps (8):** closed with 22 regression tests: hash rejection, ticket evidence outside/missing, the `set`-path ticket-done guard, the summary latest-updated fallback, gate-aware test-family aliases, `validate` on ticket evidence, ticket-evidence leaf creation, and `set --project-root` artifact containment.
+- **Structure (31):** applied the budget and duplication fixes. `SKILL.md` moved Headless to `references/headless.md` and is 2,495 tokens (budget 2,500); `ledger-schema.md` is 4,412 (budget 4,500). The three PRESERVE rows were kept. The remaining rows are editorial moves that do not change a rule; the false `step files` and `{repo}` claims were corrected.
+- **Prose (18):** all applied, including the `resume trail` contradiction, the eval README's input count, the `byte-identical to the hashes` wording, the `--plan` rule, the setup `.gitignore` path, the memlog correction pointer, and the `§ Resume semantics` spacing.
+- **Evals:** the pre-fix run graded 110/112 (failures: `status-empty` default wording, `fix-trivial-ready` symlinked out-of-root resolution). The post-fix run graded **109/112**: both pre-fix failures are gone; the three remaining rows are harness path isolation (`continue-with-ledger` ×2 for a `../../../_bmad` symlink resolution, `start-greenfield` ×1 for a `/tmp` scratch write). Those are documented harness/model limits, and `references/headless.md` now names the system temp directory explicitly.

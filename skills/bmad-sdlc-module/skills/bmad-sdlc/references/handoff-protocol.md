@@ -106,7 +106,16 @@ The conductor accepts a result only when:
 - no artifact is the ledger or the audit trail, and
 - the gate criteria are evidenced (not merely asserted): the `evidence` list is present, non-empty, and every entry exists inside `{project-root}`, and
 - `open_questions` is empty, or `verify-return --accept-questions` records them as accepted in the audit trail, and
-- no ledger edit was made by the subagent.
+- the ledger and audit trail are unchanged: their SHA-256 digests match the pre-handoff values.
+
+Hash both files before spawning the subagent, then pass the digests (SHA-256) to the validator. Use the platform's tool (`shasum -a 256` on macOS, `sha256sum` on Linux), or `verify-return` without the flags first to read the `ledger_sha256` / `memlog_sha256` fields it reports.
+
+```bash
+ledger_before=$(shasum -a 256 {workflow.ledger_path} | cut -d' ' -f1)
+memlog_before=$(shasum -a 256 {workflow.memlog_path} | cut -d' ' -f1)
+```
+
+A subagent must never write either file. `verify-return` rejects the return on a hash mismatch; the git-based `ledger_touched` flag is advisory only because an untracked or already-dirty ledger cannot be attributed to the handoff.
 
 Run `verify-return` with `--memlog {workflow.memlog_path}` so a custom audit path is checked. `--allow-empty-artifacts` is only for an action whose brief explicitly produces no file; it requires `--reason`, is logged, and does not waive missing evidence.
 
@@ -120,7 +129,8 @@ Before accepting any handoff, confirm §Return contract is satisfied, then check
 
 1. **Scope** matches the action; a PRD is not a spec, a story is not an epic.
 2. **No unapproved irreversible actions**: check `git status` and recent commits if the action could have changed them.
-3. **Decisions** proposed by the subagent are appended to `decisions` and logged, not silently adopted.
+3. **Ledger untouched**: the ledger and audit hashes still match the values captured before the handoff; any mismatch is a rejected return, not a warning.
+4. **Decisions** proposed by the subagent are appended to `decisions` and logged, not silently adopted.
 
 ## What the conductor keeps
 
