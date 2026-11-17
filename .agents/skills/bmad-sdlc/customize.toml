@@ -40,8 +40,8 @@ default_track = "feature"
 # Passed to init as --default-size.
 default_size = "one-session"
 
-# When false, activation runs headless: no questions, no menu, emit a JSON
-# report and stop at the next gate. Irreversible actions still require consent.
+# When false, activation runs headless: no questions, no menu, one JSON
+# report, and a stop at the next gate. Irreversible actions still require consent.
 ask_at_every_gate = true
 
 # How to hand a phase to its skill:

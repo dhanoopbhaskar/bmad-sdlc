@@ -15,7 +15,7 @@ A BMAD module built around one conductor skill that reads a committed ledger and
 
 ## Where things are
 
-- Canonical skill: `.agents/skills/bmad-sdlc/` — `SKILL.md` (activation and conductor loop), `references/` (phase map, gate matrix, ledger schema, version adapters, handoff protocol, menu), `customize.toml` (base config).
+- Canonical skill: `.agents/skills/bmad-sdlc/` — `SKILL.md` (activation and conductor loop), `references/` (phase map, gate matrix, ledger schema, version adapters, handoff protocol, menu, headless), `customize.toml` (base config).
 - Ledger helper: `.agents/skills/bmad-sdlc/scripts/sdlc_plan.py`; tests in `scripts/tests/`; cases in `evals/`.
 - Distributable module: `skills/bmad-sdlc-module/`; install instructions in `setup/SKILL.md`.
 - Runtime state: `_bmad-output/sdlc/plan.yaml` and `.memlog.md`. Authoring state: `.analysis/` (gitignored).

@@ -2,7 +2,9 @@
 
 This is the reference for track, size, phase, action, and legal-now questions. Load it whenever the user picks a phase.
 
-Gate levels are resolved by `scripts/sdlc_plan.py` from track, size, and model; `summary` is authoritative. `resize` recomputes them after a size or track change. `greenfield` and `feature` share the same levels; only `fix`, `audit`, and the `trivial` size narrow them.
+Gate levels are derived; `summary` wins (`SKILL.md` §References). `resize` recomputes them after a size or track change. `greenfield` and `feature` share the same levels; only `fix`, `audit`, and the `trivial` size narrow them.
+
+**Required before conditional.** `summary`'s `next_action` recommends a required gate before a conditional one. Conditional gates are available early: the user may run one by name before the stories gates, and `optional_actions` lists the open optional gates. The per-track flows show a natural order, not a lock.
 
 ## Contents
 
@@ -81,9 +83,8 @@ Notes:
 - `plan.requirements` is satisfied by `frame.spec` or `plan.prd`. Do not require both.
 - `plan.ux` and `plan.architecture` are conditional. The conductor names the condition; the user can skip with an override.
 - In the current model, `plan.stories` and `plan.sprint` collapse into Sofia's ticket tree (`tickets.toml`). Do not ask for a separate sprint plan.
-- `plan.stories` for a `fix` is either a single ticket or a direct build intent; record which in `phases.plan.note`. A one-session fix treats `plan.stories` as optional and starts at `build.ticket`.
+- `plan.stories` for a `fix` is satisfied by either a single ticket or a direct build intent; record which in `phases.plan.note`. A one-session fix treats `plan.stories` as optional and starts at `build.ticket`.
 - A fix never inherits the epic planning set.
-- **Required before conditional.** `summary`'s `next_action` recommends a required gate before a conditional one. Conditional gates are available early: `optional_actions` exposes them, and the user may take UX, architecture, or test setup before stories. The per-track flows show a natural order, not a lock.
 
 ## Solution phase
 

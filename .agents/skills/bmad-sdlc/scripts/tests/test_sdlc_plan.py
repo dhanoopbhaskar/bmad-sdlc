@@ -37,6 +37,15 @@ def run(*args: str, cwd: Path | None = None) -> dict:
     return json.loads(result.stdout)
 
 
+def digests(ledger: Path, memlog: Path | None = None) -> tuple[str, str]:
+    """The pre-handoff SHA-256 pair verify-return now requires for acceptance."""
+    memlog = memlog or (ledger.parent / ".memlog.md")
+    return (
+        hashlib.sha256(ledger.read_bytes()).hexdigest(),
+        hashlib.sha256(memlog.read_bytes()).hexdigest(),
+    )
+
+
 class LedgerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="bmad-sdlc-test-"))
@@ -194,13 +203,11 @@ class LedgerTests(unittest.TestCase):
             "--path",
             "phases.plan.evidence",
             "--value",
-            "/tmp/spec.md",
+            "spec.md",
         )
         run("log", "--plan", str(self.ledger), "--text", "plan.requirements passed")
         summary = run("summary", "--plan", str(self.ledger))
-        self.assertEqual(
-            summary["phases"][0]["evidence"], ["/tmp/spec.md"]
-        )
+        self.assertEqual(summary["phases"][0]["evidence"], ["spec.md"])
         memlog = (self.ledger.parent / ".memlog.md").read_text()
         self.assertIn("plan.requirements passed", memlog)
         self.assertIn("updated:", memlog.split("---")[1])
@@ -338,16 +345,11 @@ class LedgerTests(unittest.TestCase):
 
     def test_summary_flags_stale_cached_next(self) -> None:
         self.init()
-        run(
-            "set",
-            "--plan",
-            str(self.ledger),
-            "--workstream",
-            "ws-001",
-            "--path",
-            "next",
-            "--value",
-            '{"phase":"plan","action":"plan.stories"}',
+        # `next` is derived, so a hand edit is the only way to create a stale
+        # cache; `set` refuses it.
+        self.edit_ledger(
+            'data["workstreams"]["ws-001"]["next"] = '
+            '{"phase": "plan", "action": "plan.stories"}'
         )
         summary = run("summary", "--plan", str(self.ledger))
         self.assertTrue(summary["next_action_stale"])
@@ -386,6 +388,7 @@ class LedgerTests(unittest.TestCase):
         self.init()
         artifact = self.tmp / "artifact.md"
         artifact.write_text("# Artifact\n", encoding="utf-8")
+        ledger_sha, memlog_sha = digests(self.ledger)
         good = run(
             "verify-return",
             "--plan",
@@ -394,6 +397,8 @@ class LedgerTests(unittest.TestCase):
             str(self.tmp),
             "--return",
             '{"status":"done","artifacts":[{"path":"artifact.md"}],"evidence":["artifact.md"]}',
+            "--expect-ledger-sha", ledger_sha,
+            "--expect-memlog-sha", memlog_sha,
         )
         self.assertTrue(good["ok"], good)
         missing = run(
@@ -1270,6 +1275,7 @@ class LedgerTests(unittest.TestCase):
             '{"status":"done","artifacts":[{"path":"artifact.md"}],"evidence":["artifact.md"],"open_questions":["q"]}',
         )
         self.assertFalse(questions["ok"])
+        ledger_sha, memlog_sha = digests(self.ledger)
         accepted = run(
             "verify-return",
             "--plan",
@@ -1279,6 +1285,8 @@ class LedgerTests(unittest.TestCase):
             "--return",
             '{"status":"done","artifacts":[{"path":"artifact.md"}],"evidence":["artifact.md"],"open_questions":["q"]}',
             "--accept-questions",
+            "--expect-ledger-sha", ledger_sha,
+            "--expect-memlog-sha", memlog_sha,
         )
         self.assertTrue(accepted["ok"], accepted)
 
@@ -3252,6 +3260,7 @@ class LedgerTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        ledger_sha, memlog_sha = digests(self.ledger)
         payload = run(
             "verify-return",
             "--plan",
@@ -3260,6 +3269,8 @@ class LedgerTests(unittest.TestCase):
             str(self.tmp),
             "--return-file",
             str(return_file),
+            "--expect-ledger-sha", ledger_sha,
+            "--expect-memlog-sha", memlog_sha,
         )
         self.assertTrue(payload["ok"], payload)
         refused = run(
@@ -3296,6 +3307,7 @@ class LedgerTests(unittest.TestCase):
         )
         self.assertFalse(unreasoned["ok"])
         self.assertIn("--allow-empty-artifacts needs --reason", unreasoned["error"])
+        ledger_sha, memlog_sha = digests(self.ledger)
         allowed = run(
             "verify-return",
             "--plan",
@@ -3307,6 +3319,8 @@ class LedgerTests(unittest.TestCase):
             "--allow-empty-artifacts",
             "--reason",
             "the brief produces no file",
+            "--expect-ledger-sha", ledger_sha,
+            "--expect-memlog-sha", memlog_sha,
         )
         self.assertTrue(allowed["ok"], allowed)
 
@@ -3330,6 +3344,7 @@ class LedgerTests(unittest.TestCase):
         self.init()
         artifact = self.tmp / "artifact.md"
         artifact.write_text("# artifact\n", encoding="utf-8")
+        ledger_sha, memlog_sha = digests(self.ledger)
         payload = run(
             "verify-return",
             "--plan",
@@ -3340,6 +3355,8 @@ class LedgerTests(unittest.TestCase):
             '{"status":"done","artifacts":[{"path":"artifact.md"}],'
             '"evidence":["artifact.md"],"open_questions":["which region?"]}',
             "--accept-questions",
+            "--expect-ledger-sha", ledger_sha,
+            "--expect-memlog-sha", memlog_sha,
         )
         self.assertTrue(payload["ok"], payload)
         memlog = run("summary", "--plan", str(self.ledger))["memlog"]
@@ -3649,19 +3666,32 @@ class LedgerTests(unittest.TestCase):
             "--reason",
             "accepted risk",
         )
-        for field in ("override_reason", "decided_at"):
-            refused = run(
-                "set",
-                "--plan",
-                str(self.ledger),
-                "--workstream",
-                "ws-001",
-                "--path",
-                f"tickets.1.3.gates.review.{field}",
-                "--null",
-            )
-            self.assertFalse(refused["ok"], refused)
-            self.assertIn("cannot clear decided gate metadata", refused["error"])
+        refused = run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "tickets.1.3.gates.review.override_reason",
+            "--null",
+        )
+        self.assertFalse(refused["ok"], refused)
+        self.assertIn("cannot clear decided gate metadata", refused["error"])
+        # `decided_at` is rejected earlier as derived, which is the stronger
+        # rule: it cannot be backdated or cleared at all.
+        refused = run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "tickets.1.3.gates.review.decided_at",
+            "--null",
+        )
+        self.assertFalse(refused["ok"], refused)
+        self.assertIn("decided_at is derived", refused["error"])
 
     def test_build_phase_without_a_ticket_is_refused(self) -> None:
         self.init_track("fix", "one-session")
@@ -3683,20 +3713,19 @@ class LedgerTests(unittest.TestCase):
 
     def test_whole_ticket_replacement_runs_the_gate_guards(self) -> None:
         self.init_track("fix", "trivial")
-        for gate in ("ticket", "review", "done"):
-            run(
-                "ticket",
-                "--plan",
-                str(self.ledger),
-                "--workstream",
-                "ws-001",
-                "--id",
-                "T1",
-                "--gate",
-                gate,
-                "--status",
-                "passed",
-            )
+        run(
+            "ticket",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--id",
+            "T1",
+            "--gate",
+            "ticket",
+            "--status",
+            "passed",
+        )
         run(
             "set",
             "--plan",
@@ -3704,7 +3733,7 @@ class LedgerTests(unittest.TestCase):
             "--workstream",
             "ws-001",
             "--path",
-            "tickets.T1.gates.review.status",
+            "tickets.T1.gates.ticket.status",
             "--value",
             "blocked",
             "--reason",
@@ -3723,7 +3752,7 @@ class LedgerTests(unittest.TestCase):
             "compact",
             "--value",
             '{"title": "T1", "gates": {"ticket": {"status": "passed"}, '
-            '"review": {"status": "passed"}, "done": {"status": "open"}}}',
+            '"review": {"status": "open"}, "done": {"status": "open"}}}',
         )
         self.assertFalse(refused["ok"])
         self.assertIn("blocked gate cannot be passed", refused["error"])
@@ -4225,6 +4254,7 @@ class LedgerTests(unittest.TestCase):
                 "--status",
                 "passed",
             )
+        (self.tmp / "review.md").write_text("review\n", encoding="utf-8")
         run(
             "ticket",
             "--plan",
@@ -4242,7 +4272,6 @@ class LedgerTests(unittest.TestCase):
             "--evidence",
             "review.md",
         )
-        (self.tmp / "review.md").write_text("review\n", encoding="utf-8")
         closed = run(
             "done",
             "--plan",
@@ -5710,7 +5739,11 @@ class RegressionTests(unittest.TestCase):
                 "--value", "planted",
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("gate metadata", json.loads(result.stdout)["error"])
+            message = json.loads(result.stdout)["error"]
+            if field == "decided_at":
+                self.assertIn("decided_at is derived", message)
+            else:
+                self.assertIn("gate metadata", message)
 
     def test_ticket_evidence_must_stay_inside_the_project_root(self) -> None:
         self.init(track="fix", size="trivial")
@@ -5724,11 +5757,14 @@ class RegressionTests(unittest.TestCase):
 
     def test_done_rejects_missing_ticket_evidence(self) -> None:
         self.init(track="fix", size="trivial")
-        self.ticket_all()
-        run(
-            "ticket", "--plan", str(self.ledger), "--id", "1",
-            "--gate", "ticket", "--status", "passed",
-            "--evidence", "missing-ticket.md",
+        # The write path refuses a missing pointer; plant one by hand to prove
+        # `done` still rejects an older ledger that carries it.
+        self.edit_ledger(
+            'data["workstreams"]["ws-001"]["tickets"] = {"1": {"gates": {'
+            '"ticket": {"status": "passed", "decided_at": "2026-01-01T00:00:00Z", '
+            '"evidence": "missing-ticket.md"}, '
+            '"review": {"status": "passed", "decided_at": "2026-01-01T00:00:00Z"}, '
+            '"done": {"status": "passed", "decided_at": "2026-01-01T00:00:00Z"}}}}'
         )
         (self.tmp / "trace.md").write_text("trace\n", encoding="utf-8")
         run(
@@ -5805,6 +5841,7 @@ class RegressionTests(unittest.TestCase):
 
     def test_set_reopen_clears_ticket_evidence(self) -> None:
         self.init(track="fix", size="trivial")
+        (self.tmp / "ticket.md").write_text("ticket\n", encoding="utf-8")
         run(
             "ticket", "--plan", str(self.ledger), "--id", "1",
             "--gate", "ticket", "--status", "passed",
@@ -5941,6 +5978,10 @@ class RegressionTests(unittest.TestCase):
             "verify-return", "--plan", str(self.ledger),
             "--project-root", str(self.tmp), "--return", returned,
             "--accept-questions",
+            "--expect-ledger-sha", hashlib.sha256(self.ledger.read_bytes()).hexdigest(),
+            "--expect-memlog-sha", hashlib.sha256(
+                (self.ledger.parent / ".memlog.md").read_bytes()
+            ).hexdigest(),
         )
         self.assertTrue(payload["ok"], payload)
         memlog = self.ledger.parent / ".memlog.md"
@@ -6072,3 +6113,410 @@ class RegressionTests(unittest.TestCase):
         validated = run("validate", "--plan", str(self.ledger))
         self.assertFalse(validated["ok"])
         self.assertTrue(any("evidence" in error for error in validated["errors"]))
+
+    # -- round 10 regressions ------------------------------------------------
+
+    def test_init_resolves_the_default_template_from_the_skill_root(self) -> None:
+        result = run_full(
+            "init", "--project-root", str(self.tmp), "--name", "T",
+            "--track", "fix", "--size", "trivial",
+            "--template", "assets/plan-template.yaml",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertFalse((self.tmp / "assets").exists())
+
+    def test_default_size_applies_to_a_feature(self) -> None:
+        result = run(
+            "init", "--project-root", str(self.tmp), "--name", "T",
+            "--track", "feature", "--model", "v6", "--default-size", "epic",
+        )
+        self.assertTrue(result["ok"], result)
+        summary = run("summary", "--plan", str(self.ledger))
+        self.assertEqual(summary["workstream"]["size"], "epic")
+
+    def test_set_rejects_derived_and_unknown_paths(self) -> None:
+        self.init(track="fix", size="trivial")
+        for path, value in (
+            ("current_phase", "close"),
+            ("gats.plan.requirements.status", "passed"),
+            ("gates.build.ticket.decided_at", "12345"),
+        ):
+            result = run_full(
+                "set", "--plan", str(self.ledger), "--path", path,
+                "--value", value,
+            )
+            self.assertNotEqual(result.returncode, 0, (path, result.stdout))
+            self.assertTrue(result.stdout.strip().startswith("{"), result.stdout)
+
+    def test_failed_write_leaves_no_lock_or_directory(self) -> None:
+        target = self.tmp / "missing" / "plan.yaml"
+        result = run_full(
+            "set", "--plan", str(target), "--path", "phases.plan.note",
+            "--value", "x",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(target.parent.exists())
+
+    def test_memlog_must_stay_inside_the_project_root(self) -> None:
+        ledger = self.tmp / "plan" / "plan.yaml"
+        run(
+            "init", "--project-root", str(self.tmp), "--plan", str(ledger),
+            "--memlog", str(self.tmp / "plan" / "audit.md"),
+            "--name", "T", "--track", "fix", "--size", "trivial",
+        )
+        result = run_full(
+            "set", "--plan", str(ledger), "--memlog", "/etc/hosts",
+            "--path", "phases.build.note", "--value", "x",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("inside the project root", json.loads(result.stdout)["error"])
+
+    def test_optional_blocked_gate_blocks_its_phase(self) -> None:
+        self.init(track="fix", size="trivial")
+        run(
+            "set", "--plan", str(self.ledger), "--path",
+            "gates.close.retro.status", "--value", "blocked", "--reason", "x",
+        )
+        summary = run("summary", "--plan", str(self.ledger))
+        close = [p for p in summary["phases"] if p["phase"] == "close"][0]
+        self.assertIn("close.retro", close["blocking"])
+
+    def test_skipped_build_without_a_ticket_does_not_recommend_close(self) -> None:
+        self.init(track="fix", size="trivial")
+        for phase in ("build", "verify", "close"):
+            run(
+                "set", "--plan", str(self.ledger), "--path",
+                f"phases.{phase}.status", "--value", "skipped",
+                "--reason", "nothing to do",
+            )
+        summary = run("summary", "--plan", str(self.ledger))
+        self.assertEqual(summary["next_action"]["action"], "build.ticket")
+        result = run_full("done", "--plan", str(self.ledger))
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_blocking_a_decided_gate_on_a_done_phase_is_refused(self) -> None:
+        self.init(track="feature", size="one-session")
+        for path, value in (
+            ("gates.plan.requirements.status", "passed"),
+            ("gates.plan.stories.status", "skipped"),
+            ("gates.plan.ux.status", "skipped"),
+        ):
+            command = [
+                "set", "--plan", str(self.ledger), "--path", path,
+                "--value", value,
+            ]
+            if value != "passed":
+                command += ["--reason", "for the test"]
+            run(*command)
+        run(
+            "set", "--plan", str(self.ledger), "--path",
+            "phases.plan.status", "--value", "done", "--reason", "done",
+        )
+        result = run_full(
+            "set", "--plan", str(self.ledger), "--path",
+            "gates.plan.requirements.status", "--value", "blocked",
+            "--reason", "late",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("reopen the phase first", json.loads(result.stdout)["error"])
+
+    def test_validate_rejects_an_overridden_review_for_a_done_ticket(self) -> None:
+        self.init(track="fix", size="trivial")
+        self.edit_ledger(
+            'data["workstreams"]["ws-001"]["tickets"] = {"1": {"gates": {'
+            '"ticket": {"status": "passed", "decided_at": "2026-01-01T00:00:00Z"},'
+            '"review": {"status": "overridden", "decided_at": "2026-01-01T00:00:00Z", "override_reason": "r"},'
+            '"done": {"status": "overridden", "decided_at": "2026-01-01T00:00:00Z", "override_reason": "r"}'
+            '}}}'
+        )
+        validated = run("validate", "--plan", str(self.ledger))
+        self.assertFalse(validated["ok"])
+        self.assertTrue(any("review" in error for error in validated["errors"]))
+        result = run_full("done", "--plan", str(self.ledger), "--project-root", str(self.tmp))
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_verify_return_requires_handoff_digests(self) -> None:
+        self.init()
+        (self.tmp / "artifact.md").write_text("x\n", encoding="utf-8")
+        payload = run(
+            "verify-return", "--plan", str(self.ledger),
+            "--project-root", str(self.tmp),
+            "--return",
+            '{"status":"done","artifacts":[{"path":"artifact.md"}],"evidence":["artifact.md"]}',
+        )
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["digest_check"], "not_run")
+        self.assertTrue(any("digests not supplied" in reason for reason in payload["reasons"]))
+
+    def test_bad_track_and_model_emit_json(self) -> None:
+        self.init(track="fix", size="trivial")
+        resized = run_full(
+            "resize", "--plan", str(self.ledger), "--track", "bogus",
+        )
+        self.assertNotEqual(resized.returncode, 0)
+        self.assertTrue(resized.stdout.strip().startswith("{"), resized.stdout)
+        self.assertIn("unknown track", json.loads(resized.stdout)["error"])
+        initial = run_full(
+            "init", "--project-root", str(self.tmp), "--name", "T",
+            "--track", "fix", "--size", "trivial", "--model", "nope",
+        )
+        self.assertNotEqual(initial.returncode, 0)
+        self.assertTrue(initial.stdout.strip().startswith("{"), initial.stdout)
+        self.assertIn("unknown model", json.loads(initial.stdout)["error"])
+
+    def test_init_force_keeps_the_recorded_audit_path(self) -> None:
+        memlog = self.tmp / "custom" / "audit.md"
+        run(
+            "init", "--project-root", str(self.tmp), "--name", "T",
+            "--track", "fix", "--size", "trivial", "--memlog", str(memlog),
+        )
+        run(
+            "init", "--project-root", str(self.tmp), "--name", "T",
+            "--track", "fix", "--size", "trivial", "--force",
+            "--reason", "reset for the test",
+        )
+        recorded = self.read_ledger()["bmad"]["memlog"]
+        self.assertEqual(recorded, "custom/audit.md")
+        self.assertIn("ledger reset", memlog.read_text(encoding="utf-8"))
+
+    def test_reconcile_reports_ticket_evidence_outside_the_root(self) -> None:
+        self.init(track="fix", size="trivial")
+        self.edit_ledger(
+            'data["workstreams"]["ws-001"]["tickets"] = {"1": {"gates": {'
+            '"ticket": {"status": "passed", "decided_at": "2026-01-01T00:00:00Z", "evidence": "/etc/hosts"}'
+            '}}}'
+        )
+        payload = run("reconcile", "--plan", str(self.ledger), "--project-root", str(self.tmp))
+        self.assertFalse(payload["ok"])
+        evidence = payload["workstreams"][0]["missing_evidence"]
+        self.assertTrue(any(item.get("ticket") == "1" for item in evidence), evidence)
+
+    def test_reconcile_applies_a_phase_block(self) -> None:
+        self.init(track="fix", size="trivial")
+        run(
+            "append", "--plan", str(self.ledger), "--path",
+            "phases.verify.evidence", "--value", "missing.md",
+        )
+        payload = run(
+            "reconcile", "--plan", str(self.ledger), "--project-root",
+            str(self.tmp), "--write",
+        )
+        self.assertIn(
+            "ws-001.phases.verify.status=blocked",
+            payload["workstreams"][0]["applied"],
+        )
+        self.assertEqual(
+            self.read_ledger()["workstreams"]["ws-001"]["phases"]["verify"]["status"],
+            "blocked",
+        )
+
+    def test_reconcile_blocks_a_gate_with_no_artifact_key_and_no_evidence(self) -> None:
+        self.init()
+        run(
+            "set", "--plan", str(self.ledger), "--path",
+            "gates.verify.nfr.status", "--value", "passed",
+        )
+        payload = run("reconcile", "--plan", str(self.ledger), "--project-root", str(self.tmp))
+        self.assertIn("verify.nfr", payload["workstreams"][0]["gates_to_block"])
+
+    def test_gate_replacement_cannot_drop_evidence(self) -> None:
+        self.init(track="fix", size="trivial")
+        (self.tmp / "review.md").write_text("review\n", encoding="utf-8")
+        run(
+            "ticket", "--plan", str(self.ledger), "--id", "1",
+            "--gate", "ticket", "--status", "passed", "--evidence", "review.md",
+        )
+        result = run_full(
+            "set", "--plan", str(self.ledger), "--workstream", "ws-001",
+            "--path", "tickets.1.gates.ticket", "--replace",
+            "--value", '{"status":"passed"}', "--reason", "replace",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("evidence", json.loads(result.stdout)["error"])
+
+    def test_init_force_recovers_an_unparseable_ledger(self) -> None:
+        self.ledger.parent.mkdir(parents=True)
+        self.ledger.write_text("schema: bmad-sdlc/1\ngates: [oops\n", encoding="utf-8")
+        payload = run(
+            "init", "--project-root", str(self.tmp), "--name", "T",
+            "--track", "fix", "--size", "trivial", "--model", "unknown",
+            "--force", "--reason", "recover a corrupt ledger",
+        )
+        self.assertTrue(payload["ok"], payload)
+        self.assertTrue(run("validate", "--plan", str(self.ledger))["ok"])
+        self.assertTrue(self.ledger.with_name("plan.yaml.bak").is_file())
+
+    def test_build_cannot_be_skipped_with_no_ticket(self) -> None:
+        self.init(track="fix", size="trivial")
+        result = run_full(
+            "set", "--plan", str(self.ledger), "--workstream", "ws-001",
+            "--path", "phases.build.status", "--value", "skipped",
+            "--reason", "not needed",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no ticket built", json.loads(result.stdout)["error"])
+
+    def test_reopening_a_done_phase_to_blocked_needs_a_reason(self) -> None:
+        self.init(track="fix", size="trivial")
+        self.edit_ledger(
+            'data["workstreams"]["ws-001"]["phases"]["plan"]["status"] = "done"'
+        )
+        result = run_full(
+            "set", "--plan", str(self.ledger), "--workstream", "ws-001",
+            "--path", "phases.plan.status", "--value", "blocked",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("needs --reason", json.loads(result.stdout)["error"])
+
+    def test_verify_return_digest_check_fails_on_a_stale_memlog(self) -> None:
+        self.init(track="fix", size="trivial")
+        (self.tmp / "artifact.md").write_text("x\n", encoding="utf-8")
+        memlog = self.ledger.parent / ".memlog.md"
+        ledger_sha = hashlib.sha256(self.ledger.read_bytes()).hexdigest()
+        stale_memlog_sha = hashlib.sha256(memlog.read_bytes()).hexdigest()
+        with memlog.open("a", encoding="utf-8") as handle:
+            handle.write("hand edit\n")
+        returned = json.dumps(
+            {
+                "status": "done",
+                "artifacts": [{"path": "artifact.md"}],
+                "evidence": [{"path": "artifact.md"}],
+            }
+        )
+        payload = run(
+            "verify-return", "--plan", str(self.ledger),
+            "--project-root", str(self.tmp), "--return", returned,
+            "--expect-ledger-sha", ledger_sha,
+            "--expect-memlog-sha", stale_memlog_sha,
+        )
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["digest_check"], "failed")
+        self.assertTrue(
+            any("audit trail changed during the handoff" in item
+                for item in payload["reasons"])
+        )
+
+    def test_reconcile_rejects_phase_evidence_outside_the_root(self) -> None:
+        self.init(track="fix", size="trivial")
+        # The write path refuses an outside pointer; plant one by hand to
+        # prove reconcile still catches an older ledger that carries it.
+        self.edit_ledger(
+            'data["workstreams"]["ws-001"]["phases"]["verify"]["evidence"] = '
+            '["/etc/hosts"]'
+        )
+        payload = run(
+            "reconcile", "--plan", str(self.ledger), "--project-root",
+            str(self.tmp),
+        )
+        missing = payload["workstreams"][0]["missing_evidence"]
+        self.assertTrue(any(item.get("phase") == "verify" for item in missing), missing)
+
+    def test_summary_reports_a_manifest_only_skill(self) -> None:
+        self.init(track="fix", size="trivial")
+        config = self.tmp / "_bmad" / "_config"
+        config.mkdir(parents=True)
+        (config / "skill-manifest.csv").write_text(
+            "skill,name\nbmad-build,bmad-build\n", encoding="utf-8"
+        )
+        summary = run(
+            "summary", "--plan", str(self.ledger), "--project-root", str(self.tmp)
+        )
+        self.assertTrue(summary["next_action"]["skill_installed"])
+        self.assertTrue(summary["next_action"]["skill_manifest_only"])
+
+    def test_project_root_token_is_stored_project_relative(self) -> None:
+        self.init()
+        (self.tmp / "docs").mkdir()
+        (self.tmp / "docs" / "prd.md").write_text("# PRD\n", encoding="utf-8")
+        payload = run(
+            "set", "--plan", str(self.ledger), "--project-root", str(self.tmp),
+            "--path", "artifacts.prd", "--value", "{project-root}/docs/prd.md",
+        )
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(
+            self.read_ledger()["workstreams"]["ws-001"]["artifacts"]["prd"],
+            "docs/prd.md",
+        )
+
+    def test_ux_pointer_may_name_the_folder_that_holds_the_pair(self) -> None:
+        self.init()
+        ux = self.tmp / "_bmad-output" / "planning-artifacts" / "ux"
+        ux.mkdir(parents=True)
+        (ux / "DESIGN.md").write_text("# Design\n", encoding="utf-8")
+        (ux / "EXPERIENCE.md").write_text("# Experience\n", encoding="utf-8")
+        run(
+            "set", "--plan", str(self.ledger), "--path", "artifacts.ux",
+            "--value", "_bmad-output/planning-artifacts/ux",
+        )
+        payload = run(
+            "reconcile", "--plan", str(self.ledger), "--project-root",
+            str(self.tmp),
+        )
+        missing = payload["workstreams"][0]["missing_pointers"]
+        self.assertFalse(any(item.get("artifact") == "ux" for item in missing), missing)
+
+    def test_append_refuses_phase_evidence_outside_the_root(self) -> None:
+        self.init(track="fix", size="trivial")
+        result = run_full(
+            "append", "--plan", str(self.ledger), "--path",
+            "phases.verify.evidence", "--value", "/etc/hosts",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("inside the project root", json.loads(result.stdout)["error"])
+
+    def test_init_refuses_a_missing_project_root(self) -> None:
+        missing = self.tmp / "ghost"
+        result = run_full(
+            "init", "--project-root", str(missing), "--name", "T",
+            "--track", "fix", "--size", "trivial",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("project root not found", json.loads(result.stdout)["error"])
+        self.assertFalse(missing.exists())
+
+    def test_validate_rejects_an_unknown_workstream_field(self) -> None:
+        self.init(track="fix", size="trivial")
+        self.edit_ledger(
+            'data["workstreams"]["ws-001"]["gats"] = {"plan": {}}'
+        )
+        payload = run("validate", "--plan", str(self.ledger))
+        self.assertFalse(payload["ok"])
+        self.assertTrue(
+            any("unknown fields" in error for error in payload["errors"]),
+            payload["errors"],
+        )
+
+    def test_done_rejects_a_ticket_closed_on_an_overridden_review(self) -> None:
+        self.init(track="fix", size="trivial")
+        self.edit_ledger(
+            'data["workstreams"]["ws-001"]["tickets"] = {"1": {"gates": {'
+            '"ticket": {"status": "passed", "decided_at": "2026-01-01T00:00:00Z"}, '
+            '"review": {"status": "overridden", "decided_at": "2026-01-01T00:00:00Z", '
+            '"override_reason": "accepted risk"}, '
+            '"done": {"status": "passed", "decided_at": "2026-01-01T00:00:00Z"}}}}'
+        )
+        result = run_full(
+            "done", "--plan", str(self.ledger), "--project-root", str(self.tmp),
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "build.1.done (review not passed)",
+            json.loads(result.stdout)["error"],
+        )
+
+    def test_reconcile_reports_a_decided_phase_instead_of_blocking_it(self) -> None:
+        self.init(track="fix", size="trivial")
+        self.edit_ledger(
+            'node = data["workstreams"]["ws-001"]["phases"]["verify"]\n'
+            'node["status"] = "done"\n'
+            'node["evidence"] = ["missing.md"]'
+        )
+        payload = run(
+            "reconcile", "--plan", str(self.ledger), "--project-root",
+            str(self.tmp), "--write",
+        )
+        self.assertIn("phases.verify", payload["workstreams"][0]["requires_reason"])
+        self.assertEqual(
+            self.read_ledger()["workstreams"]["ws-001"]["phases"]["verify"]["status"],
+            "done",
+        )

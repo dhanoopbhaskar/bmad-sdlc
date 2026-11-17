@@ -1,0 +1,246 @@
+[
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:331-334,393-397",
+    "trigger_condition": "Any command given a --plan whose parent directory does not exist takes the lock first, and file_lock runs lock_path.parent.mkdir(parents=True, exist_ok=True).",
+    "guard_snippet": "Resolve and validate the plan path before file_lock, and never create the parent directory inside file_lock.",
+    "potential_consequence": "A typo or hostile --plan creates a directory and a plan.yaml.lock outside {project-root} even though the command fails, violating the isolation guardrail."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:660-671",
+    "trigger_condition": "set --memlog <absolute path outside the project> on a ledger at a non-default path with no --project-root: _known_project_roots is empty, so the containment check is skipped.",
+    "guard_snippet": "When roots is empty, require --project-root for an explicit --memlog, or derive the root from the ledger and enforce containment.",
+    "potential_consequence": "The audit trail is written outside the project and splits from the committed ledger."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2956-2961,3777-3778",
+    "trigger_condition": "set --path current_phase --value close validates, writes, then refresh_workstream recomputes and overwrites the derived field.",
+    "guard_snippet": "Reject current_phase and next in _validate_path as derived fields, or return the value that actually landed in the ledger.",
+    "potential_consequence": "The command reports ok:true and the requested value while the ledger still holds the old phase; the conductor believes it moved."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2691-2780,77-90; validate 1967-2293",
+    "trigger_condition": "A misspelled workstream root (set --path gats.plan.requirements.status, or append --path notev2) matches no branch in _validate_path and is written as a new workstream key; validate never checks workstream keys.",
+    "guard_snippet": "Reject a scoped path whose root is neither a doc root nor a workstream root, and add a validate error for unknown workstream keys.",
+    "potential_consequence": "The typo returns ok:true, persists a phantom subtree, and validate reports errors: [] while the intended gate never advances."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:1533-1548,3314; references/gate-matrix.md:74",
+    "trigger_condition": "phase_blocking only considers required/conditional gates, so a phase whose only undecided gate is a blocked optional gate can be set done and validates clean.",
+    "guard_snippet": "Make phase completion require no blocked gate at any level, or narrow gate-matrix.md §Phase completion to required/conditional.",
+    "potential_consequence": "summary says the phase is complete while an unresolved blocked gate sits inside it; the documented completion rule is false (the same section's done bullet already says required/conditional)."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3282-3285",
+    "trigger_condition": "The reopen guard only requires a reason for a done/skipped phase moving to active or pending; set --path phases.<phase>.status --value blocked is accepted with no --reason.",
+    "guard_snippet": "Treat every transition out of done/skipped, including blocked, as a reopen requiring --reason, and record it in the audit line.",
+    "potential_consequence": "A completed phase is silently regressed with no rationale and the workstream can be left unclosable."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:1551-1586; references/phase-map.md:86; references/ledger-schema.md:181",
+    "trigger_condition": "optional_actions skips every gate whose level is not optional, while phase-map.md says conditional gates are available early through optional_actions.",
+    "guard_snippet": "Include open conditional gates in optional_actions tagged with their level, or correct phase-map.md to name the actual mechanism (conditional_open or the phase action menu).",
+    "potential_consequence": "The documented early path for UX, architecture, and test setup does not exist in the machine-readable list; a conductor following phase-map cannot offer the gate without inventing an action."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:5041-5052; references/handoff-protocol.md:109-111",
+    "trigger_condition": "verify-return compares --expect-ledger-sha/--expect-memlog-sha only when supplied; with neither flag it returns ok:true, and the docs suggest running it without the flags first.",
+    "guard_snippet": "Require both flags for acceptance, or emit a distinct digest_check: not_run with a reason when they are absent.",
+    "potential_consequence": "A subagent that edited the ledger or audit trail during the handoff is accepted whenever the caller omits the flags."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4796-4821; compare done 4220-4246",
+    "trigger_condition": "For a passed/overridden gate with no ARTIFACT_GATES key and no phase evidence, done appends 'no artifact key and no phase evidence' but reconcile's empty-keys branch never flags it.",
+    "guard_snippet": "Give reconcile the same empty-keys branch as done and add the gate to gates_to_block or a needs-evidence list.",
+    "potential_consequence": "reconcile reports a clean ledger, then done refuses closure at the final gate, after the work is done."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4757-4772; compare done 4260-4289 and cmd_ticket 3980-3992",
+    "trigger_condition": "ticket --gate ticket --status passed --evidence <missing path> is accepted (only containment is checked), and reconcile walks phase evidence only, never ticket-gate evidence.",
+    "guard_snippet": "Reject a nonexistent ticket-gate evidence pointer at write time, and resolve ticket-gate pointers in reconcile.",
+    "potential_consequence": "reconcile says clean while a passed ticket gate points at a missing file; done fails late in the build loop."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4133-4145,2237-2249; references/gate-matrix.md:57",
+    "trigger_condition": "A hand-edited ledger with done: overridden and review: overridden validates clean and done closes, while _guard_ticket_order and gate-matrix require a passed review.",
+    "guard_snippet": "Require review == passed in cmd_done and validate whenever done is decided, matching _guard_ticket_order.",
+    "potential_consequence": "A workstream closes on an overridden review with no independent pass; which path enforces the rule depends on how the ledger was written."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:5291,5373-5374,8",
+    "trigger_condition": "resize --track bogus and init --model nope use argparse choices, so argparse prints usage and exits 2 before main can emit JSON.",
+    "guard_snippet": "Validate these values in the commands as cmd_ticket now does, or override ArgumentParser.error to emit the JSON error contract.",
+    "potential_consequence": "The module promises JSON errors and every caller reads JSON; these routes return usage text and exit 2."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/references/headless.md:24; SKILL.md:74; scripts/sdlc_plan.py:2557-2562; references/version-adapters.md:29",
+    "trigger_condition": "A name in _bmad/_config/skill-manifest.csv with no readable SKILL.md is included in skills, so summary reports skill_installed: true with skill_manifest_only: true, while headless and SKILL step 7 react only to a missing skill.",
+    "guard_snippet": "Treat skill_manifest_only: true as a blocked/missing skill with the repair step, or make skill_installed false for manifest-only names.",
+    "potential_consequence": "Headless emits status: ready for a skill the conductor cannot load, and the handoff then fails."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:1705-1709,1772-1776,1808; references/ledger-schema.md:255",
+    "trigger_condition": "init --force --reason on a ledger whose bmad.memlog is a custom file, without repeating --memlog: --force replaces data before resolve_memlog, so the new ledger records the default .memlog.md.",
+    "guard_snippet": "Carry the old recorded memlog forward, or require --memlog when --force discards one, and name the old path in the reset line.",
+    "potential_consequence": "The corruption-recovery path splits the audit trail; the old history is orphaned and uncommitted."
+  },
+  {
+    "lens": "adversarial",
+    "location": "docs/bmad-sdlc.md:80; README.md:98-105; AGENTS.md:18",
+    "trigger_condition": "Round 9 added references/headless.md, but docs/bmad-sdlc.md says 'the six reference files', the README layout lists six (and no VERSION), and AGENTS.md omits headless.",
+    "guard_snippet": "Update the count to seven and add references/headless.md (and VERSION) to the README layout and the AGENTS reference list.",
+    "potential_consequence": "The design inventory is factually wrong, and a reader following the repository map has no entry for the file carrying the unattended stop rule."
+  },
+  {
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/evals/README.md:61; evals/cases.json:170-176",
+    "trigger_condition": "The README says feature-one-session reaches build.ticket, but feature/one-session resolves plan.requirements as conditional and open, so the next action is frame.spec; its rubric accepts frame.spec or build.ticket.",
+    "guard_snippet": "Correct the case-state note: only the fix cases and missing-build reach build.ticket; feature-one-session is planning-first.",
+    "potential_consequence": "The eval README overstates build-route coverage; a regression in that route would pass both suites."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:1607-1608,4110-4111",
+    "trigger_condition": "A non-audit build phase is skipped with no ticket (for example fix/trivial, build skipped): phase_blocking sees no gates, so summary recommends close.mark_done, while done requires a built ticket.",
+    "guard_snippet": "In phase_blocking/computed_next, treat a non-audit build phase with no tickets as blocking (append build.ticket), matching done's unconditional check.",
+    "potential_consequence": "summary recommends close.mark_done, done fails with 'build.ticket (no ticket built)', and the only fix is reopening build."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:1533-1548",
+    "trigger_condition": "An optional gate is set blocked, then its phase is marked done.",
+    "guard_snippet": "Block a phase when any gate is blocked, regardless of level.",
+    "potential_consequence": "The phase closes with a blocked gate and summary.blocked_gates hides it."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3153-3183",
+    "trigger_condition": "A decided gate is set blocked on a done/skipped phase; the order guards only run for status == open.",
+    "guard_snippet": "Run the phase/build order guards for every status change out of a decided state, not only when status == open.",
+    "potential_consequence": "set writes a ledger that validate rejects as 'done with undecided gates', a dead end for the conductor."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4762-4770",
+    "trigger_condition": "Phase evidence is appended as an absolute path outside the project root; reconcile checks only is_file() and catches the project_relative ValueError without marking it.",
+    "guard_snippet": "Mark an outside-root pointer as missing evidence in reconcile, and reject it in cmd_append.",
+    "potential_consequence": "reconcile exits 0 and --write never blocks; only done rejects it, at the end."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3240-3265",
+    "trigger_condition": "A <phase>.unblock next action tells the conductor to set the phase active, but _guard_active_phase refuses while an earlier phase is still active.",
+    "guard_snippet": "Exempt a blocked-to-active transition, or state the earlier-phase precondition in menu.md:109.",
+    "potential_consequence": "The documented clear-phase command is refused and the ledger stays blocked with no documented recovery order."
+  },
+  {
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3205-3220,3616-3619",
+    "trigger_condition": "set --path gates.<phase>.<gate>.decided_at --value <non-string> is accepted; _guard_decided_metadata fires only for None and _validate_value does not type-check the field.",
+    "guard_snippet": "Reject a non-string decided_at and refuse decided_at writes on a decided gate, as node replacement does.",
+    "potential_consequence": "Backdated or non-string decision timestamps pass validate and reach summary."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:1718-1733",
+    "trigger_condition": "No test passes a relative, existing --template, so the skill-root fallback arm that resolves the documented default assets/plan-template.yaml never executes.",
+    "guard_snippet": "Add init with --template assets/plan-template.yaml and assert ok plus no assets/ copy under the project; removing the skill-root arm must fail.",
+    "potential_consequence": "The documented default template path could regress and every activation would fail with 'ledger template not found'.",
+    "gap_shape": "regression-gap",
+    "consumer": "SKILL.md:56-63 activation step 5, whose --template defaults to assets/plan-template.yaml",
+    "evidence": "All three --template tests either omit the flag, pass an absolute path, or pass a relative absent path that fails under either arm."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4847-4857",
+    "trigger_condition": "The only test reaching reconcile --write with a phase to block asserts the artifact write, not the phase write; no test reaches the decided-phase requires_reason arm.",
+    "guard_snippet": "Assert ws-001.phases.plan.status=blocked in applied and that a done phase appears in requires_reason.",
+    "potential_consequence": "reconcile --write could stop blocking a phase with missing evidence and the suite stays green.",
+    "gap_shape": "broken-verification-gap",
+    "consumer": "activation's reconcile step at SKILL.md:69-72 and ledger-schema.md:254",
+    "evidence": "test_sdlc_plan.py:1330-1366 asserts only artifacts.prd in applied; the other --write run skips a paused workstream."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:5041-5052",
+    "trigger_condition": "Every call that passes --expect-memlog-sha passes the current digest, so the mismatch branch never fires.",
+    "guard_snippet": "Pass a stale memlog digest and assert ok is false with 'audit trail changed during the handoff'.",
+    "potential_consequence": "A wrong-file or skipped memlog comparison passes, so an edited audit trail validates as clean.",
+    "gap_shape": "regression-gap",
+    "consumer": "the handoff gate at SKILL.md:85-93 and handoff-protocol.md:118",
+    "evidence": "test_verify_return_hash_flags_reject_a_changed_ledger mutates only the ledger and passes the unchanged memlog digest."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:1748-1753",
+    "trigger_condition": "The only test supplying --default-size asserts the fix track ignores it; the branch applying it to feature/greenfield never runs.",
+    "guard_snippet": "Add init --track feature --default-size epic and assert the resolved size, mirroring the default-track test.",
+    "potential_consequence": "A regression that ignores args.default_size passes, and every feature/greenfield workstream starts one size smaller than configured.",
+    "gap_shape": "regression-gap",
+    "consumer": "customize.toml:36-41 and the documented init --default-size at SKILL.md:61-62",
+    "evidence": "grep --default-size returns one hit: test_fix_ignores_the_configured_default_size (test_sdlc_plan.py:1698-1711)."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:3094-3103,3630-3638",
+    "trigger_condition": "Both replacement paths are tested only with gates that carry no pointer or with a replacement that drops the whole gate; neither evidence-drop guard executes.",
+    "guard_snippet": "Set a ticket gate with evidence, then --replace without the pointer, and assert the refusal; repeat for gates.<ticket>.<gate>.",
+    "potential_consequence": "A replacement can silently erase the pointer a passed gate was decided against.",
+    "gap_shape": "regression-gap",
+    "consumer": "set --replace on tickets.<id> / tickets.<id>.gates.<gate> per ledger-schema.md:234",
+    "evidence": "test_whole_ticket_replacement_cannot_drop_a_decided_gate drops the whole gate; the gate-node test has no predecessor evidence; grep 'drop a decided gate's evidence' has no test match."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:2560-2562",
+    "trigger_condition": "No test asserts skill_manifest_only; only detect's manifest_only list and skill_installed are asserted.",
+    "guard_snippet": "Stage a manifest-only bmad-spec install, run summary --project-root, and assert skill_installed true with skill_manifest_only true.",
+    "potential_consequence": "The flag could stay false or be dropped while the conductor hands off to a skill the session cannot load.",
+    "gap_shape": "regression-gap",
+    "consumer": "the missing-skill rule at SKILL.md:74, with version-adapters.md:29 and ledger-schema.md:180",
+    "evidence": "grep skill_manifest_only in test_sdlc_plan.py returns nothing; the manifest-only test asserts detect only."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py:4521-4548",
+    "trigger_condition": "Every migrate test initializes a feature or fix workstream, so migrate's audit-ticket materialization never runs.",
+    "guard_snippet": "init --track audit, delete the tickets map, migrate, and assert ws-001.tickets.audit plus a clean validate.",
+    "potential_consequence": "The documented repair for an audit ledger can fail to converge, pushing the user to init --force and losing history.",
+    "gap_shape": "regression-gap",
+    "consumer": "the corrupt-ledger sequence validate then migrate in ledger-schema.md:255, with validate's audit requirement at sdlc_plan.py:2259-2273",
+    "evidence": "All five migrate tests use init() (feature) or fix/trivial; the audit branch is unreached."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/references/phase-map.md:86",
+    "trigger_condition": "optional_actions keeps only level == optional, so conditional gates never appear there; the doc claim contradicts the code and no test pins the list's composition.",
+    "guard_snippet": "Pin optional_actions on a feature/epic ledger: plan.ux must appear there if the doc is the rule, or only in conditional_open if the code is.",
+    "potential_consequence": "A conductor following phase-map tells the user UX, architecture, or test setup can be taken early, but the runtime list never contains those gates.",
+    "gap_shape": "other",
+    "consumer": "the conductor rendering optional work from optional_actions (menu.md:36, SKILL.md:74)",
+    "evidence": "sdlc_plan.py:1567-1576 skips every non-optional entry; resolve_gate_levels gives plan.ux/plan.architecture conditional for feature/epic; a fresh feature/epic ledger returns optional_actions: []."
+  },
+  {
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/evals/README.md:61",
+    "trigger_condition": "feature/one-session resolves plan.requirements as conditional, so the case's first action is frame.spec, and the rubric permits stopping there; the claim that it reaches build.ticket is not what the eval checks.",
+    "guard_snippet": "Tighten cases.json:175 to require build.ticket with a staged planning state, or correct README:61 and state that feature/one-session routing is unit-suite territory.",
+    "potential_consequence": "Build-first routing for feature/one-session is treated as eval-verified when the run may stop at a planning gate, and no unit test asserts the first action either.",
+    "gap_shape": "other",
+    "consumer": "evals/README.md §Case state and the routing contract in phase-map.md §Tracks",
+    "evidence": "cases.json:169-185 gives feature/one-session and rubric line 175 accepts frame.spec or build.ticket; the recorded transcript emits frame.spec; grep one-session in the unit suite shows routing assertions only for fix and audit."
+  }
+]

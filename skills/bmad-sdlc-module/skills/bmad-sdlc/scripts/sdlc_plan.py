@@ -18,7 +18,8 @@ Subcommands:
   set       Set a scalar/object at a dotted path (optionally under a workstream).
   append    Append a value to a list at a dotted path.
   ticket    Set one per-ticket gate (ticket|tests|review|done).
-  done      Mark the workstream done once all required gates are decided.
+  done      Mark the workstream done once all required gates are decided and
+            no gate at any level is blocked.
   migrate   Add gate levels and a tickets map to a pre-v2 ledger.
   reconcile Report missing artifact pointers and discoverable orphan artifacts.
   verify-return  Check a handoff return's artifacts and status; report ledger
@@ -45,7 +46,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 try:
@@ -80,6 +81,7 @@ WORKSTREAM_ROOTS = {
     "size",
     "status",
     "started",
+    "updated",
     "current_phase",
     "artifacts",
     "phases",
@@ -329,7 +331,9 @@ def file_lock(path: Path):
     inode. POSIX uses ``flock``; Windows uses ``msvcrt.locking``.
     """
     lock_path = path.with_name(path.name + ".lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    # Never create the parent here: a failed command must not leave
+    # directories behind, and callers create their own parent after
+    # validating containment.
     if fcntl is not None:
         with lock_path.open("a", encoding="utf-8") as handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
@@ -391,6 +395,21 @@ def plan_locked(func):
             # works in a read-only checkout.
             return func(args)
         plan = _plan_path(args)
+        if func.__name__ == "cmd_init":
+            # init owns ledger creation, but only inside an existing project
+            # root: creating the root from a typo would fabricate a project.
+            root = _resolve_root(args)
+            if not root.is_dir():
+                fail(f"project root not found: {root}")
+            try:
+                plan.relative_to(root)
+            except ValueError:
+                fail(f"ledger must resolve inside the project root: {plan}")
+            plan.parent.mkdir(parents=True, exist_ok=True)
+        elif not plan.parent.is_dir():
+            # Refuse before the lock, so a failed command leaves no lock file
+            # or directory behind.
+            fail(f"ledger not found: {plan}")
         with file_lock(plan):
             before = None
             if plan.is_file():
@@ -438,7 +457,7 @@ _CONFIG_ERRORS: list[str] = []
 def _load_toml(path: Path) -> dict:
     try:
         return tomllib.loads(path.read_text(encoding="utf-8"))
-    except tomllib.TOMLDecodeError as exc:
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
         # A malformed config is not the same as an absent one: resolving the
         # default folders would silently point every evidence check at the
         # wrong directory, so record the failure for detect/init to surface.
@@ -504,6 +523,33 @@ def load_plan(path: Path) -> dict:
     if not isinstance(data, dict):
         fail(f"ledger root must be a mapping: {path}")
     return data
+
+
+def try_load_plan(path: Path) -> dict | None:
+    """Parse a ledger without failing; None means unreadable.
+
+    `init --force` is the last-resort recovery path, so it must be able to
+    read a ledger that no longer parses (a git conflict or a truncated write)
+    and still reset it.
+    """
+    try:
+        data = _yaml().load(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - a corrupt file is exactly what --force repairs
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def bmad_map(data: dict) -> dict:
+    """The `bmad` block as a mapping, even when a hand edit made it a scalar."""
+    value = data.get("bmad")
+    return value if isinstance(value, dict) else {}
+
+
+def is_timestamp(value) -> bool:
+    """Accept an ISO string or the datetime YAML loads from an unquoted one."""
+    if isinstance(value, (datetime, date)):
+        return True
+    return isinstance(value, str) and bool(value.strip())
 
 
 def save_plan(path: Path, data: dict) -> None:
@@ -602,6 +648,20 @@ def project_relative(value: str, project_root: Path) -> str:
         return value
 
 
+def expand_pointer_token(value, project_root: Path | None):
+    """Store a `{project-root}` pointer as a project-relative path.
+
+    Readers resolve a stored pointer against the project root but do not know
+    the token, so leaving it in the ledger makes a matching file look missing.
+    """
+    if project_root is None or not isinstance(value, str):
+        return value
+    if "{project-root}" not in value:
+        return value
+    expanded = expand_project_root(value, project_root)
+    return project_relative(str(expanded), project_root)
+
+
 def _default_project_root(ledger: Path) -> Path | None:
     """The project root for the default <project>/_bmad-output/sdlc layout."""
     resolved = ledger.resolve()
@@ -622,7 +682,9 @@ def _resolve_root(args: argparse.Namespace) -> Path:
     ).resolve()
 
 
-def _known_project_roots(args: argparse.Namespace, ledger: Path) -> list[Path]:
+def _known_project_roots(
+    args: argparse.Namespace, ledger: Path, data: dict | None = None
+) -> list[Path]:
     """Project roots the command can trust, explicit first."""
     roots: list[Path] = []
     if getattr(args, "project_root", None):
@@ -630,6 +692,16 @@ def _known_project_roots(args: argparse.Namespace, ledger: Path) -> list[Path]:
     default = _default_project_root(ledger)
     if default is not None:
         roots.append(default)
+    # A custom ledger layout can still name its project root through the
+    # recorded (relative) audit path: the ancestor that holds it is the root.
+    recorded = ((data or {}).get("bmad") or {}).get("memlog")
+    if recorded:
+        candidate = Path(str(recorded))
+        if not candidate.is_absolute():
+            for parent in (ledger.parent, *ledger.parent.parents):
+                if (parent / candidate).exists():
+                    roots.append(parent)
+                    break
     seen: set[str] = set()
     unique: list[Path] = []
     for root in roots:
@@ -656,20 +728,20 @@ def resolve_memlog(data: dict, args: argparse.Namespace, ledger: Path) -> Path:
     custom ledger layout still finds the trail instead of nesting it under
     the ledger directory.
     """
-    roots = _known_project_roots(args, ledger)
+    roots = _known_project_roots(args, ledger, data)
     if getattr(args, "memlog", None):
         root = roots[0] if roots else _resolve_root(args)
         value = expand_project_root(args.memlog, root)
         resolved = (value if value.is_absolute() else root / value).resolve()
         if resolved == ledger.resolve():
             fail("the audit trail must differ from the ledger")
-        if roots and not _inside(resolved, roots[0]):
+        if not _inside(resolved, root):
             fail(
                 "the audit trail must resolve inside the project root: "
                 f"{resolved}"
             )
         return resolved
-    recorded = (data.get("bmad") or {}).get("memlog")
+    recorded = bmad_map(data).get("memlog")
     if recorded:
         candidate = Path(str(recorded))
         if candidate.is_absolute():
@@ -745,11 +817,27 @@ def apply_levels(workstream: dict, model: str) -> list[str]:
     return changed
 
 
-def artifact_ticket_ids(project_root: Path, paths: dict[str, str]) -> set[str] | None:
-    """Ticket ids named by BMAD artifacts, or None when no artifact is readable."""
+def artifact_ticket_ids(
+    project_root: Path,
+    paths: dict[str, str],
+    pointer: str | None = None,
+) -> set[str] | None:
+    """Ticket ids named by BMAD artifacts, or None when no artifact is readable.
+
+    A recorded `artifacts.tickets` pointer wins over discovery: when two
+    tickets files exist, the ledger names the one the overlay was built from.
+    """
     found: set[str] = set()
     seen = False
-    tickets_file = discover_artifact("tickets", project_root, paths)
+    tickets_file = None
+    if pointer:
+        candidate = Path(str(pointer))
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        if candidate.is_file():
+            tickets_file = candidate
+    if tickets_file is None:
+        tickets_file = discover_artifact("tickets", project_root, paths)
     if tickets_file is not None:
         try:
             parsed = tomllib.loads(tickets_file.read_text(encoding="utf-8"))
@@ -1247,6 +1335,7 @@ def next_workstream_id(workstreams: dict) -> str:
 
 
 def append_memlog(path: Path, type_: str, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
     with file_lock(path):
         return _append_memlog(path, type_, text)
 
@@ -1527,6 +1616,11 @@ def first_blocking(entries: list[dict]) -> dict | None:
                 and not entry["override_reason"]
             ):
                 return entry
+    # A blocked optional gate still stops its phase and `done`, so never let
+    # the recommendation skip past it to close.mark_done.
+    for entry in entries:
+        if entry["status"] == "blocked":
+            return entry
     return None
 
 
@@ -1534,10 +1628,11 @@ def phase_blocking(entries: list[dict]) -> list[dict]:
     """Every gate that prevents a phase from being complete."""
     blocking: list[dict] = []
     for entry in entries:
-        if entry["level"] in ("required", "conditional") and entry["status"] in (
-            "open",
-            "blocked",
-        ):
+        if entry["status"] == "blocked":
+            # A blocked gate stops its phase at any level; an optional gate
+            # may stay open, but it may not stay blocked.
+            blocking.append(entry)
+        elif entry["level"] in ("required", "conditional") and entry["status"] == "open":
             blocking.append(entry)
         elif (
             entry["level"] in ("required", "conditional")
@@ -1603,9 +1698,11 @@ def computed_next(
         entries = phase_gate_entries(workstream, phase, track, size, model)
         blocking = phase_blocking(entries)
         # A phase status is a cache. It may only suppress gates when the
-        # phase actually has no blocking gate left.
+        # phase actually has no blocking gate left, and a non-audit build
+        # phase with no ticket is never finished.
         if node.get("status") in ("done", "skipped") and not blocking:
-            continue
+            if not (phase == "build" and track != "audit" and not tickets):
+                continue
         next_gate = first_blocking(entries)
         if next_gate:
             result = action_for_gate(next_gate["id"], track, size, model)
@@ -1661,7 +1758,8 @@ def refresh_workstream(workstream: dict, model: str) -> None:
         entries = phase_gate_entries(workstream, phase, track, size, model)
         blocking = phase_blocking(entries)
         if node.get("status") in ("done", "skipped") and not blocking:
-            continue
+            if not (phase == "build" and track != "audit" and not (workstream.get("tickets") or {})):
+                continue
         if (
             phase == "build"
             and not (workstream.get("tickets") or {})
@@ -1733,6 +1831,10 @@ def cmd_init(args: argparse.Namespace) -> None:
             fail(f"ledger template not found: {template_path}")
     if not str(args.name or "").strip():
         fail("--name must be non-empty")
+    if args.model is not None and args.model not in ("v6", "current", "unknown"):
+        fail(
+            f"unknown model {args.model!r}; choose one of v6, current, unknown"
+        )
     track = args.track or args.default_track or "feature"
     if track not in TRACKS:
         fail(f"unknown track {track!r}; choose one of {', '.join(TRACKS)}")
@@ -1759,22 +1861,28 @@ def cmd_init(args: argparse.Namespace) -> None:
         )
     stamp = now_iso()
     reset_from = None
+    previous_data = None
     if args.force and ledger_path.exists():
         if not str(args.reason or "").strip():
             fail("--force requires --reason")
         backup = ledger_path.with_name(ledger_path.name + ".bak")
         atomic_write_text(backup, ledger_path.read_text(encoding="utf-8"))
         reset_from = backup
+        # A corrupt ledger is the main reason to run --force, so this read
+        # must never abort the reset. It only carries a recorded memlog.
+        previous_data = try_load_plan(ledger_path)
     existing = ledger_path.exists() and not args.force
     if existing:
         data = load_plan(ledger_path)
     else:
         data = template_document(Path(__file__).resolve().parent, template_path)
     # A second init without --memlog must keep appending to the audit trail
-    # recorded at init, not start a second one beside the ledger.
+    # recorded at init, not start a second one beside the ledger. A forced
+    # reset reads the old ledger before the template replaces it.
     if not args.memlog:
-        memlog_path = resolve_memlog(data, args, ledger_path)
-    current_model = (data.get("bmad") or {}).get("model")
+        carried = previous_data if previous_data is not None else data
+        memlog_path = resolve_memlog(carried, args, ledger_path)
+    current_model = bmad_map(data).get("model")
     if (
         args.model == "unknown"
         and existing
@@ -1805,13 +1913,13 @@ def cmd_init(args: argparse.Namespace) -> None:
         data["project"] = args.name
     data["created"] = stamp if args.force else (data.get("created") or stamp)
     data["updated"] = stamp
-    if args.memlog or not (data.get("bmad") or {}).get("memlog"):
+    if args.memlog or not bmad_map(data).get("memlog"):
         # Keep the committed plan portable: always prefer a project-relative
         # audit path. A path outside the root is refused above, so this cannot
         # silently write a machine-specific absolute path into shared history.
         recorded_memlog = project_relative(str(memlog_path), project_root)
     else:
-        recorded_memlog = (data.get("bmad") or {}).get("memlog")
+        recorded_memlog = bmad_map(data).get("memlog")
     # Merge, do not replace: a custom template may add organization-specific
     # keys under bmad and they must survive init.
     bmad = data.get("bmad")
@@ -1839,6 +1947,12 @@ def cmd_init(args: argparse.Namespace) -> None:
     data["bmad"] = bmad
     workstreams = data.get("workstreams")
     if not isinstance(workstreams, dict):
+        if existing:
+            # Replacing a malformed root would discard real workstreams.
+            fail(
+                "ledger workstreams must be a mapping; run validate, or "
+                "init --force --reason to reset it"
+            )
         workstreams = {}
     if existing and model != current_model:
         # Derived levels must follow the recorded model, including when an
@@ -1927,10 +2041,12 @@ def cmd_validate(args: argparse.Namespace) -> None:
         errors.append(f"schema must be {SCHEMA!r}")
     if not isinstance(data.get("project"), str) or not data.get("project"):
         errors.append("project must be a non-empty string")
-    if not isinstance(data.get("created"), str):
-        errors.append("created must be a string")
-    if not isinstance(data.get("updated"), str):
-        errors.append("updated must be a string")
+    if not is_timestamp(data.get("created")):
+        errors.append("created must be a timestamp string")
+    if not is_timestamp(data.get("updated")):
+        errors.append("updated must be a timestamp string")
+    if not isinstance(data.get("bmad"), dict):
+        errors.append("bmad must be a mapping")
     workstreams = data.get("workstreams")
     if not isinstance(workstreams, dict):
         errors.append("workstreams must be a mapping")
@@ -1946,9 +2062,21 @@ def cmd_validate(args: argparse.Namespace) -> None:
         errors.append(
             f"active_workstream {active!r} must have status 'active'"
         )
-    model = (data.get("bmad") or {}).get("model")
+    model = bmad_map(data).get("model")
     if model not in ("v6", "current", "unknown"):
         errors.append("bmad.model must be one of v6, current, unknown")
+    recorded_memlog = bmad_map(data).get("memlog")
+    root = (
+        _resolve_root(args)
+        if getattr(args, "project_root", None)
+        else _default_project_root(path)
+    )
+    if recorded_memlog and root is not None:
+        candidate = Path(str(recorded_memlog))
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        if not _inside(candidate, root):
+            errors.append("bmad.memlog must resolve inside the project root")
     active_count = sum(
         1
         for workstream in workstreams.values()
@@ -1969,6 +2097,19 @@ def cmd_validate(args: argparse.Namespace) -> None:
         if not isinstance(workstream, dict):
             errors.append(f"{label} must be a mapping")
             continue
+        unknown = sorted(set(workstream) - WORKSTREAM_ROOTS)
+        if unknown:
+            errors.append(
+                f"{label} has unknown fields: " + ", ".join(unknown)
+            )
+        phases_node = workstream.get("phases")
+        if isinstance(phases_node, dict):
+            unknown_phases = sorted(set(phases_node) - set(PHASES))
+            if unknown_phases:
+                errors.append(
+                    f"{label}.phases has unknown phases: "
+                    + ", ".join(unknown_phases)
+                )
         track = workstream.get("track")
         size = workstream.get("size")
         if track not in TRACKS:
@@ -1988,9 +2129,7 @@ def cmd_validate(args: argparse.Namespace) -> None:
             workstream.get("name") or ""
         ).strip():
             errors.append(f"{label}.name must be a non-empty string")
-        if not isinstance(workstream.get("started"), str) or not str(
-            workstream.get("started") or ""
-        ).strip():
+        if not is_timestamp(workstream.get("started")):
             errors.append(f"{label}.started must be a timestamp string")
         if workstream.get("status") not in WS_STATUSES:
             errors.append(f"{label}.status must be one of {', '.join(WS_STATUSES)}")
@@ -2234,18 +2373,10 @@ def cmd_validate(args: argparse.Namespace) -> None:
                             f"{tlabel}.gates.{gate_name} is "
                             f"{node.get('status')} without an override_reason"
                         )
-                if statuses["done"] == "passed" and statuses["review"] != "passed":
+                if statuses["done"] in ("passed", "overridden") and statuses["review"] != "passed":
                     errors.append(
-                        f"{tlabel}.gates.done is passed before build.review "
+                        f"{tlabel}.gates.done is decided before build.review "
                         "is passed"
-                    )
-                elif (
-                    statuses["done"] == "overridden"
-                    and statuses["review"] not in ("passed", "overridden")
-                ):
-                    errors.append(
-                        f"{tlabel}.gates.done is overridden before build.review "
-                        "is decided"
                     )
                 if (
                     track != "audit"
@@ -2337,7 +2468,7 @@ def empty_ticket_summary() -> dict:
 def cmd_summary(args: argparse.Namespace) -> None:
     path = _plan_path(args)
     data = load_plan(path)
-    model = (data.get("bmad") or {}).get("model") or "unknown"
+    model = bmad_map(data).get("model") or "unknown"
     workstreams = data.get("workstreams") or {}
     memlog = resolve_memlog(data, args, path)
     workstream_id = args.workstream or data.get("active_workstream")
@@ -2453,7 +2584,7 @@ def cmd_summary(args: argparse.Namespace) -> None:
             prior_complete
             and status != "blocked"
             and not blocking_entries
-            and (phase != "build" or has_tickets or status in ("done", "skipped"))
+            and (phase != "build" or has_tickets)
         )
         prior_complete = prior_complete and complete
         phases.append(
@@ -2503,7 +2634,11 @@ def cmd_summary(args: argparse.Namespace) -> None:
             locked_phases.append(
                 {"phase": phase["phase"], "missing_gate": prior_blocking[0]}
             )
-        if phase["status"] not in ("done", "skipped") or phase["blocking"]:
+        if (
+            phase["status"] not in ("done", "skipped")
+            or phase["blocking"]
+            or (phase["phase"] == "build" and not tickets["count"])
+        ):
             if phase["blocking"]:
                 prior_blocking.extend(phase["blocking"])
             elif phase["phase"] == "build" and not tickets["count"]:
@@ -2694,6 +2829,9 @@ def _validate_path(path: str, ticket_map: dict | None = None) -> None:
     if not parts:
         fail("empty --path")
     root = parts[0]
+    if parts[-1] == "decided_at":
+        # Derived: stamped when a gate is decided and cleared on reopen.
+        fail("decided_at is derived; it is stamped when a gate is decided")
     if root == "phases":
         if len(parts) < 2 or parts[1] not in PHASES:
             fail(f"unknown phase in path: {path}")
@@ -2774,9 +2912,23 @@ def _validate_path(path: str, ticket_map: dict | None = None) -> None:
             return
         if parts[1] != "model" or len(parts) > 2:
             fail(f"unknown bmad field in path: {path}")
-    elif root in ("name", "track", "size", "status", "started", "current_phase", "next"):
+    elif root in ("name", "track", "size", "status", "started"):
         if len(parts) != 1:
             fail(f"path is too deep: {path}")
+    elif root == "decisions":
+        if len(parts) != 1:
+            fail(f"path is too deep: {path}")
+    elif root in ("current_phase", "next"):
+        fail(f"{root} is derived; it is recomputed after each write")
+    elif root in DOC_ROOTS:
+        if len(parts) != 1:
+            fail(f"path is too deep: {path}")
+    else:
+        fail(
+            f"unknown path root {root!r}; choose a ledger field "
+            "(name, track, size, status, started, phases, gates, tickets, "
+            "artifacts, decisions, bmad, or a document field)"
+        )
 
 
 def _validate_value(path: str, value, ticket_map: dict | None = None) -> None:
@@ -3137,6 +3289,23 @@ def _guard_reopen(root: dict, path: str, value, reason: str | None) -> None:
     current = (
         str(node.get("status") or "open") if isinstance(node, dict) else "open"
     )
+    if status in ("open", "blocked"):
+        # `blocked` is not a decision, but writing it into a done phase makes
+        # the ledger fail validation. The phase must reopen first either way.
+        if kind == "phase":
+            phase = (root.get("phases") or {}).get(reference) or {}
+            if isinstance(phase, dict) and phase.get("status") in ("done", "skipped"):
+                fail(
+                    f"cannot set {reference}.{gate_name} while phase "
+                    f"{reference} is {phase.get('status')}; reopen the phase first"
+                )
+        else:
+            build = (root.get("phases") or {}).get("build") or {}
+            if isinstance(build, dict) and build.get("status") in ("done", "skipped"):
+                fail(
+                    f"cannot set build.{gate_name} while phase build is "
+                    f"{build.get('status')}; reopen the phase first"
+                )
     if current not in ("passed", "overridden", "skipped"):
         return
     if status == current:
@@ -3150,7 +3319,7 @@ def _guard_reopen(root: dict, path: str, value, reason: str | None) -> None:
             "cannot reopen a gate on a done workstream; reopen the "
             "workstream first"
         )
-    if status != "open":
+    if status not in ("open", "blocked"):
         return
     if kind == "phase":
         phase = (root.get("phases") or {}).get(reference) or {}
@@ -3279,7 +3448,7 @@ def _guard_phase_status(
         return
     phase_node = (workstream.get("phases") or {}).get(parts[1]) or {}
     current = phase_node.get("status") if isinstance(phase_node, dict) else None
-    if status in ("active", "pending") and current in ("done", "skipped"):
+    if status in ("active", "pending", "blocked") and current in ("done", "skipped"):
         if not str(reason or "").strip():
             fail(f"reopening phase {parts[1]} needs --reason")
         return
@@ -3287,12 +3456,15 @@ def _guard_phase_status(
         return
     phase = parts[1]
     if (
-        status == "done"
+        status in ("done", "skipped")
         and phase == "build"
         and workstream.get("track") != "audit"
         and not (workstream.get("tickets") or {})
     ):
-        fail("build cannot be done with no ticket built")
+        # `done` refuses this state, so accepting the skip would strand the
+        # workstream: summary keeps recommending build.ticket and close has no
+        # waiver. Refuse the skip at the write instead.
+        fail(f"build cannot be {status} with no ticket built")
     entries = phase_gate_entries(
         workstream,
         phase,
@@ -3325,14 +3497,14 @@ def _guard_phase_status(
 def cmd_set(args: argparse.Namespace) -> None:
     path = _plan_path(args)
     data = load_plan(path)
-    previous_model = (data.get("bmad") or {}).get("model")
+    previous_model = bmad_map(data).get("model")
     root, scope_id = _scope(args, data, args.path)
     ticket_map = root.get("tickets") if isinstance(root, dict) else None
     if not isinstance(ticket_map, dict):
         ticket_map = None
     _validate_path(args.path, ticket_map)
     parts = _parts(args.path)
-    model = (data.get("bmad") or {}).get("model") or "unknown"
+    model = bmad_map(data).get("model") or "unknown"
     if getattr(args, "delete", False):
         if args.value is not None or args.null:
             fail("--delete cannot be combined with --value or --null")
@@ -3416,6 +3588,7 @@ def cmd_set(args: argparse.Namespace) -> None:
                 candidate.resolve().relative_to(project_root.resolve())
             except ValueError:
                 fail("artifact pointers must stay inside the project root")
+            value = expand_pointer_token(value, project_root)
     if scope_id is not None and str(root.get("status") or "active") == "done":
         if not (
             args.path == "status"
@@ -3485,7 +3658,7 @@ def cmd_set(args: argparse.Namespace) -> None:
         fail(f"replacing {args.path} needs --replace and --reason")
     if args.replace and not str(args.reason or "").strip():
         fail("--replace needs --reason")
-    roots = _known_project_roots(args, path)
+    roots = _known_project_roots(args, path, data)
     if roots and parts and parts[0] == "tickets":
         pointers: list[str] = []
         if parts[-1] == "evidence" and isinstance(value, str):
@@ -3498,13 +3671,26 @@ def cmd_set(args: argparse.Namespace) -> None:
             elif ticket_gate_node and value.get("evidence"):
                 pointers.append(str(value["evidence"]))
         for pointer in pointers:
-            candidate = Path(pointer)
+            candidate = Path(expand_project_root(pointer, roots[0]))
             if not candidate.is_absolute():
                 candidate = roots[0] / candidate
             if not _inside(candidate, roots[0]):
                 fail("ticket gate evidence must stay inside the project root")
+        if isinstance(value, str):
+            value = expand_pointer_token(value, roots[0])
+        elif isinstance(value, dict):
+            if ticket_node:
+                for node in (value.get("gates") or {}).values():
+                    if isinstance(node, dict) and node.get("evidence"):
+                        node["evidence"] = expand_pointer_token(
+                            str(node["evidence"]), roots[0]
+                        )
+            elif ticket_gate_node and value.get("evidence"):
+                value["evidence"] = expand_pointer_token(
+                    str(value["evidence"]), roots[0]
+                )
     if args.path == "bmad":
-        previous = data.get("bmad") or {}
+        previous = bmad_map(data)
         if previous.get("memlog") and not (
             isinstance(value, dict) and value.get("memlog")
         ):
@@ -3514,14 +3700,21 @@ def cmd_set(args: argparse.Namespace) -> None:
             )
         if isinstance(value, dict) and value.get("memlog"):
             recorded = Path(str(value["memlog"]))
-            bmad_roots = _known_project_roots(args, path)
-            base = bmad_roots[0] if bmad_roots else path.parent
+            bmad_roots = _known_project_roots(args, path, data)
+            root = bmad_roots[0] if bmad_roots else _default_project_root(path)
+            if root is None and getattr(args, "project_root", None):
+                root = _resolve_root(args)
+            if root is None:
+                fail(
+                    "pass --project-root to set bmad.memlog for a ledger "
+                    "outside the default layout"
+                )
             if not recorded.is_absolute():
-                recorded = base / recorded
+                recorded = root / recorded
             resolved_recorded = recorded.resolve()
             if resolved_recorded == path.resolve():
                 fail("the audit trail must differ from the ledger")
-            if bmad_roots and not _inside(resolved_recorded, bmad_roots[0]):
+            if not _inside(resolved_recorded, root):
                 fail(
                     "the audit trail must resolve inside the project root: "
                     f"{resolved_recorded}"
@@ -3872,6 +4065,17 @@ def cmd_append(args: argparse.Namespace) -> None:
         value is None or (isinstance(value, str) and not value.strip())
     ):
         fail("evidence entries must be non-empty paths")
+    if args.path.endswith(".evidence") and isinstance(value, str):
+        roots = _known_project_roots(args, path, data)
+        if roots:
+            candidate = Path(expand_project_root(value, roots[0]))
+            if not candidate.is_absolute():
+                candidate = roots[0] / candidate
+            if not _inside(candidate, roots[0]):
+                # A permanently blocking pointer with no removal command is a
+                # trap; refuse it at the only write that creates it.
+                fail("phase evidence must stay inside the project root")
+            value = str(expand_pointer_token(value, roots[0]))
     if args.path == "decisions":
         if not isinstance(value, dict):
             fail("a decision must be a JSON object")
@@ -3881,7 +4085,7 @@ def cmd_append(args: argparse.Namespace) -> None:
         value.setdefault("reason", "")
     node.append(value)
     if scope_id is not None and args.path != "next":
-        refresh_workstream(root, (data.get("bmad") or {}).get("model") or "unknown")
+        refresh_workstream(root, bmad_map(data).get("model") or "unknown")
     data["updated"] = now_iso()
     save_plan(path, data)
     append_memlog(
@@ -3982,14 +4186,20 @@ def cmd_ticket(args: argparse.Namespace) -> None:
             fail("--evidence must be a non-empty path")
         if args.status not in ("passed", "overridden", "skipped"):
             fail("--evidence applies to a decided gate, not open or blocked")
-        roots = _known_project_roots(args, path)
+        roots = _known_project_roots(args, path, data)
+        evidence = str(args.evidence)
         if roots:
-            candidate = Path(str(args.evidence))
+            candidate = Path(expand_project_root(evidence, roots[0]))
             if not candidate.is_absolute():
                 candidate = roots[0] / candidate
             if not _inside(candidate, roots[0]):
                 fail("ticket gate evidence must stay inside the project root")
-        node["evidence"] = str(args.evidence)
+            if not candidate.is_file() or candidate.stat().st_size == 0:
+                fail(
+                    "ticket gate evidence must name an existing non-empty file"
+                )
+            evidence = str(expand_pointer_token(evidence, roots[0]))
+        node["evidence"] = evidence
     if args.status in ("passed", "overridden"):
         if args.gate == "done" and statuses["review"] != "passed":
             fail(
@@ -4028,7 +4238,7 @@ def cmd_ticket(args: argparse.Namespace) -> None:
     elif args.status != "overridden":
         node["override_reason"] = None
     refresh_workstream(
-        workstream, (data.get("bmad") or {}).get("model") or "unknown"
+        workstream, bmad_map(data).get("model") or "unknown"
     )
     data["updated"] = now_iso()
     save_plan(path, data)
@@ -4092,13 +4302,18 @@ def cmd_done(args: argparse.Namespace) -> None:
             "workstream is already done; reopen it with "
             "set --path status --value active --reason <why> first"
         )
-    model = (data.get("bmad") or {}).get("model") or "unknown"
+    model = bmad_map(data).get("model") or "unknown"
     track = workstream.get("track", "feature")
     size = workstream.get("size", "epic")
     blocking: list[str] = []
     tickets = workstream.get("tickets")
     if not isinstance(tickets, dict):
         tickets = {}
+    accept_missing_tickets = bool(
+        getattr(args, "accept_missing_tickets", False)
+    )
+    if accept_missing_tickets and not str(args.reason or "").strip():
+        fail("--accept-missing-tickets needs --reason")
     for phase in PHASES:
         node = (workstream.get("phases") or {}).get(phase) or {}
         entries = phase_gate_entries(workstream, phase, track, size, model)
@@ -4107,7 +4322,12 @@ def cmd_done(args: argparse.Namespace) -> None:
             blocking.append(f"{phase} is blocked")
         # Check build before the done/skipped short-circuit: a skipped build
         # phase with no ticket must not close the workstream.
-        if phase == "build" and not tickets and track != "audit":
+        if (
+            phase == "build"
+            and not tickets
+            and track != "audit"
+            and not accept_missing_tickets
+        ):
             blocking.append("build.ticket (no ticket built)")
         if node.get("status") in ("done", "skipped") and not phase_block:
             continue
@@ -4130,13 +4350,8 @@ def cmd_done(args: argparse.Namespace) -> None:
             )
             for name in TICKET_GATES
         }
-        if statuses["done"] == "passed" and statuses["review"] != "passed":
+        if statuses["done"] in ("passed", "overridden") and statuses["review"] != "passed":
             blocking.append(f"build.{ticket_id}.done (review not passed)")
-        elif (
-            statuses["done"] == "overridden"
-            and statuses["review"] not in ("passed", "overridden")
-        ):
-            blocking.append(f"build.{ticket_id}.done (review not decided)")
         if (
             track != "audit"
             and statuses["review"] in ("passed", "overridden")
@@ -4175,6 +4390,9 @@ def cmd_done(args: argparse.Namespace) -> None:
     if project_root is not None:
         for key, pointer in artifacts.items():
             if not pointer:
+                continue
+            if key == "ux" and ux_pair_ready(workstream, project_root):
+                # The UX pointer may name the folder that holds the pair.
                 continue
             candidate = Path(str(pointer))
             if not candidate.is_absolute():
@@ -4321,12 +4539,13 @@ def cmd_done(args: argparse.Namespace) -> None:
         # count as overlay drift. reconcile already exempts it.
         ledger_tickets.discard("audit")
     artifact_tickets = (
-        artifact_ticket_ids(project_root, resolve_paths(project_root))
+        artifact_ticket_ids(
+            project_root,
+            resolve_paths(project_root),
+            artifacts.get("tickets"),
+        )
         if project_root is not None
         else None
-    )
-    accept_missing_tickets = bool(
-        getattr(args, "accept_missing_tickets", False)
     )
     if ledger_tickets and artifact_tickets is None:
         # No readable ticket artifact means the overlay cannot be checked.
@@ -4409,6 +4628,8 @@ def cmd_done(args: argparse.Namespace) -> None:
         close_notes.append(
             "accepted missing evidence: " + ", ".join(missing_evidence)
         )
+    if accept_missing_tickets and not tickets and track != "audit":
+        close_notes.append("accepted build with no ticket")
     if accept_missing_tickets and ledger_tickets and artifact_tickets is None:
         close_notes.append(
             "accepted missing ticket artifact for: "
@@ -4439,9 +4660,19 @@ def cmd_done(args: argparse.Namespace) -> None:
 def cmd_migrate(args: argparse.Namespace) -> None:
     path = _plan_path(args)
     data = load_plan(path)
-    model = (data.get("bmad") or {}).get("model") or "unknown"
-    workstreams = data.get("workstreams") or {}
+    model = bmad_map(data).get("model") or "unknown"
     changed: list[str] = []
+    if not isinstance(data.get("bmad"), dict):
+        # A scalar `bmad` block crashes every reader; migrate is the repair path.
+        data["bmad"] = {"model": model}
+        changed.append("bmad")
+    workstreams = data.get("workstreams")
+    if not isinstance(workstreams, dict):
+        fail(
+            "workstreams must be a mapping, found "
+            f"{type(workstreams).__name__}; migrate cannot rebuild a "
+            "workstream list, so repair the root by hand or reset the ledger"
+        )
     skipped_workstreams: list[str] = []
     for workstream_id, workstream in workstreams.items():
         if not isinstance(workstream, dict):
@@ -4725,6 +4956,8 @@ def cmd_reconcile(args: argparse.Namespace) -> None:
         for key in ARTIFACTS:
             pointer = artifacts.get(key)
             if pointer:
+                if key == "ux" and ux_pair_ready(workstream, project_root):
+                    continue
                 candidate = Path(str(pointer))
                 if not candidate.is_absolute():
                     candidate = project_root / candidate
@@ -4762,13 +4995,37 @@ def cmd_reconcile(args: argparse.Namespace) -> None:
                 candidate = Path(str(value))
                 if not candidate.is_absolute():
                     candidate = project_root / candidate
-                try:
-                    relative = project_relative(str(candidate), project_root)
-                except ValueError:
-                    relative = str(value)
-                if not candidate.is_file():
+                inside = _inside(candidate, project_root)
+                relative = project_relative(str(candidate), project_root)
+                if not inside or not candidate.is_file():
                     missing_evidence.append(
                         {"phase": phase, "path": relative}
+                    )
+        # Per-ticket evidence pointers are resolved exactly like phase
+        # evidence: a dangling pointer must surface while the build loop can
+        # still fix it, not only at `done`.
+        for ticket_id, ticket in (workstream.get("tickets") or {}).items():
+            if not isinstance(ticket, dict):
+                continue
+            for gate_name, gate in (ticket.get("gates") or {}).items():
+                if not isinstance(gate, dict):
+                    continue
+                pointer = gate.get("evidence")
+                if not pointer:
+                    continue
+                candidate = Path(str(pointer))
+                if not candidate.is_absolute():
+                    candidate = project_root / candidate
+                inside = _inside(candidate, project_root)
+                relative = project_relative(str(candidate), project_root)
+                if not inside or not candidate.is_file():
+                    missing_evidence.append(
+                        {
+                            "phase": "build",
+                            "ticket": str(ticket_id),
+                            "gate": gate_name,
+                            "path": relative,
+                        }
                     )
         applied_here: list[str] = []
         if writable:
@@ -4783,7 +5040,7 @@ def cmd_reconcile(args: argparse.Namespace) -> None:
         levels = resolve_gate_levels(
             workstream.get("track", "feature"),
             workstream.get("size", "epic"),
-            (data.get("bmad") or {}).get("model") or "unknown",
+            bmad_map(data).get("model") or "unknown",
         )
         gates_to_block = [
             gate
@@ -4817,15 +5074,25 @@ def cmd_reconcile(args: argparse.Namespace) -> None:
                     ):
                         gates_to_block.append(gate_id)
                     continue
-                if keys and not any(artifacts.get(key) for key in keys):
-                    gates_to_block.append(gate_id)
+                if keys:
+                    if not any(artifacts.get(key) for key in keys):
+                        gates_to_block.append(gate_id)
+                else:
+                    # No artifact key exists for this gate, so phase evidence
+                    # is the only place a pointer can live; `done` applies the
+                    # same rule.
+                    phase_evidence = (
+                        (workstream.get("phases") or {}).get(phase) or {}
+                    ).get("evidence") or []
+                    if not phase_evidence:
+                        gates_to_block.append(gate_id)
         gates_to_block = sorted(set(gates_to_block))
         phases_to_block = sorted(
             {item["phase"] for item in missing_evidence}
         )
         requires_reason: list[str] = []
         if writable:
-            model = (data.get("bmad") or {}).get("model") or "unknown"
+            model = bmad_map(data).get("model") or "unknown"
             for gate_id in gates_to_block:
                 phase, _, name = gate_id.partition(".")
                 node = (
@@ -4858,7 +5125,9 @@ def cmd_reconcile(args: argparse.Namespace) -> None:
             if applied_here:
                 refresh_workstream(workstream, model)
             applied.extend(applied_here)
-        artifact_ids = artifact_ticket_ids(project_root, paths)
+        artifact_ids = artifact_ticket_ids(
+            project_root, paths, artifacts.get("tickets")
+        )
         ledger_ids = set((workstream.get("tickets") or {}).keys())
         if artifact_ids is not None and workstream.get("track") != "audit":
             tickets_missing_in_ledger = sorted(artifact_ids - ledger_ids)
@@ -5040,15 +5309,28 @@ def cmd_verify_return(args: argparse.Namespace) -> None:
     memlog_sha = sha256_of(memlog_path)
     expected_ledger = str(getattr(args, "expect_ledger_sha", "") or "").strip().lower()
     expected_memlog = str(getattr(args, "expect_memlog_sha", "") or "").strip().lower()
+    digest_mismatch = False
     if expected_ledger and expected_ledger != ledger_sha:
+        digest_mismatch = True
         reasons.append(
             "ledger changed during the handoff "
             f"(expected {expected_ledger}, found {ledger_sha})"
         )
     if expected_memlog and expected_memlog != memlog_sha:
+        digest_mismatch = True
         reasons.append(
             "audit trail changed during the handoff "
             f"(expected {expected_memlog}, found {memlog_sha})"
+        )
+    # Acceptance needs both pre-handoff digests. A probe call may omit them to
+    # read the current hashes, but it is not an acceptance.
+    if expected_ledger and expected_memlog:
+        digest_check = "failed" if digest_mismatch else "passed"
+    else:
+        digest_check = "not_run"
+        reasons.append(
+            "handoff digests not supplied; pass --expect-ledger-sha and "
+            "--expect-memlog-sha to confirm the ledger and audit trail"
         )
     if status != "done":
         reasons.append(f"status is {status}")
@@ -5111,6 +5393,7 @@ def cmd_verify_return(args: argparse.Namespace) -> None:
             "open_questions": open_questions,
             "accept_questions": accept_questions,
             "allow_empty_artifacts": allow_empty,
+            "digest_check": digest_check,
             "decisions": returned.get("decisions") or [],
             "next_recommendation": returned.get("next_recommendation"),
             "git_dirty": git_dirty,
@@ -5155,7 +5438,7 @@ def cmd_resize(args: argparse.Namespace) -> None:
                 + ", ".join(real_tickets)
                 + "); replace the workstream or close those tickets first"
             )
-    model = (data.get("bmad") or {}).get("model") or "unknown"
+    model = bmad_map(data).get("model") or "unknown"
     if track != "audit" and workstream.get("track") == "audit":
         audit_ticket = (workstream.get("tickets") or {}).get("audit")
         decided = [
@@ -5288,7 +5571,7 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--name", required=True)
     init.add_argument("--track", default=None)
     init.add_argument("--size", default=None)
-    init.add_argument("--model", choices=("v6", "current", "unknown"))
+    init.add_argument("--model")
     init.add_argument("--default-track", default=None)
     init.add_argument("--default-size", default=None)
     init.add_argument("--workstream")
@@ -5370,8 +5653,8 @@ def build_parser() -> argparse.ArgumentParser:
     resize.add_argument("--plan", required=True)
     resize.add_argument("--project-root", default=None)
     resize.add_argument("--workstream")
-    resize.add_argument("--track", choices=TRACKS)
-    resize.add_argument("--size", choices=SIZES)
+    resize.add_argument("--track")
+    resize.add_argument("--size")
     resize.add_argument("--reason")
     resize.add_argument("--memlog")
     resize.set_defaults(func=cmd_resize)

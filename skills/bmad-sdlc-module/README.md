@@ -38,6 +38,7 @@ bmad-sdlc-module/
   scripts/package.sh       # rebuild skills/bmad-sdlc from the canonical source
   skills/bmad-sdlc/        # generated distributable copy
     SKILL.md
+    VERSION
     customize.toml
     assets/plan-template.yaml
     references/*.md

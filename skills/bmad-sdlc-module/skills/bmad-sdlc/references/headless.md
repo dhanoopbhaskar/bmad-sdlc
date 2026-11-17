@@ -21,10 +21,8 @@ Load this file when `{workflow.ask_at_every_gate}` is false or the user says "he
 
 ## Missing skills
 
-- Missing `next_action.skill` → `status: blocked`, name the install step, keep the action id. `close.mark_done` and `<phase>.unblock` are conductor actions with no skill; they are not blocked for that reason.
+- Missing `next_action.skill` → `status: blocked`, name the install step, keep the action id. A manifest-only skill (`skill_manifest_only: true`) is blocked for the same reason: the name exists but no readable `SKILL.md` does. `close.mark_done` and `<phase>.unblock` are conductor actions with no skill; they are not blocked for that reason.
 
 ## Emitted block
 
-`summary` returns the full field set in `references/ledger-schema.md`; read `phase`, `next_action`, `optional_actions`.
-
-Emit one JSON block: `{status, model, track, size, phase, ledger, memlog, next_action, optional_actions, open_gates, blocked_gates, locked_phases, assumptions}`. `assumptions` is always an array. `track` and `size` come from `summary.workstream` when a workstream is active, otherwise from the top-level `summary.track`/`summary.size` after close. Copy `next_action`, `optional_actions`, `open_gates`, `blocked_gates`, and `locked_phases` verbatim from `summary`; never filter, reorder, or drop a gate. Omit only the per-level gate lists and ticket detail.
+Emit one JSON block: `summary`'s field set (`references/ledger-schema.md` §Summary shape) plus `status`, `model`, `track`, `size`, and `assumptions`; read `phase`, `next_action`, and `optional_actions` from it. `assumptions` is always an array; `track` and `size` come from `summary.workstream` when a workstream is active, otherwise from the top-level `summary.track`/`summary.size` after close. Copy every summary list you keep verbatim — never filter, reorder, or drop a gate — and omit the per-level gate lists (`required_open`, `conditional_open`, `optional_open`) and ticket detail.

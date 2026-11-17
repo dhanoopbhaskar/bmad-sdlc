@@ -16,12 +16,12 @@ BMAD recommends a fresh chat for each workflow to avoid context mixing. The cond
 
 Start at the rung named by `{workflow.handoff_preference}` and descend to the first rung that is available:
 
-1. **Fresh subagent** — spawn a subagent seeded with the brief in §Brief template. It loads the target skill and does the work. The conductor's context stays clean.
-2. **Inline skill load** — load the target skill into the current session and run it. There is no template for this rung: use the same brief inline. Warn that context is shared; prefer inline only for small steps.
-3. **User-run handoff** — print a ready-to-paste prompt plus the artifact paths. The two prompt templates in §Fallback prompts are ready to paste. The user runs the matching prompt in a fresh session and returns with the artifact. The conductor validates on return.
+1. **Fresh subagent** (`prefer`) — spawn a subagent seeded with the brief in §Brief template. It loads the target skill and does the work. The conductor's context stays clean.
+2. **Inline skill load** (`inline`) — load the target skill into the current session and run it. There is no template for this rung: use the same brief inline. Warn the user that context is shared; prefer inline only for small steps.
+3. **User-run handoff** (`user`) — print a ready-to-paste prompt plus the artifact paths. The two prompt templates in §Fallback prompts are ready to paste. The user runs the matching prompt in a fresh session and returns with the artifact. The conductor validates on return.
 4. **Blocked** — if none apply, mark the action `blocked` with a reason and the exact install/prompt needed.
 
-Start at `prefer` → rung 1, `inline` → rung 2, `user` → rung 3; rung 4 (`blocked`) is terminal regardless of preference. Do not run a phase yourself when the resolved preference or ladder points to a fresh subagent; when the preference is `inline`, load the target skill's `SKILL.md` and follow it rather than improvising. The conductor is a coordinator, not a substitute for the specialist skill.
+Do not run a phase yourself when the resolved preference or ladder points to a fresh subagent; when the preference is `inline`, load the target skill's `SKILL.md` and follow it rather than improvising. The conductor is a coordinator, not a substitute for the specialist skill.
 
 ## Brief template (rung 1, fresh subagent)
 
@@ -108,7 +108,7 @@ The conductor accepts a result only when:
 - `open_questions` is empty, or `verify-return --accept-questions` records them as accepted in the audit trail, and
 - the ledger and audit trail are unchanged: their SHA-256 digests match the pre-handoff values.
 
-Hash both files before spawning the subagent, then pass the digests (SHA-256) to the validator. Use the platform's tool (`shasum -a 256` on macOS, `sha256sum` on Linux), or `verify-return` without the flags first to read the `ledger_sha256` / `memlog_sha256` fields it reports.
+Hash both files before spawning the subagent, then pass the digests (SHA-256) to the validator. Use the platform's tool (`shasum -a 256` on macOS, `sha256sum` on Linux). A probe call without the flags reports the `ledger_sha256` / `memlog_sha256` fields, but it is not an acceptance: `verify-return` requires both `--expect-*` flags to accept a return. Its `digest_check` field is `passed`, `failed`, or `not_run`; only `passed` means both digests matched.
 
 ```bash
 ledger_before=$(shasum -a 256 {workflow.ledger_path} | cut -d' ' -f1)
@@ -119,7 +119,7 @@ A subagent must never write either file. `verify-return` rejects the return on a
 
 Run `verify-return` with `--memlog {workflow.memlog_path}` so a custom audit path is checked. `--allow-empty-artifacts` is only for an action whose brief explicitly produces no file; it requires `--reason`, is logged, and does not waive missing evidence.
 
-If `status` is `blocked` or `needs_input`, do not update the ledger to `done`. Record the blocker, present it to the user, and offer: answer and retry, switch to inline, or skip with override.
+If `status` is `blocked` or `needs_input`, do not mark the workstream, phase, or ticket `done`. Record the blocker, present it to the user, and offer: answer and retry, switch to inline, or skip with override.
 
 If the subagent claims success but the artifact is missing, treat it as `blocked` and say what is missing. Never trust a claim over the filesystem.
 

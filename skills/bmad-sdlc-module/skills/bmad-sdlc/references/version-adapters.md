@@ -40,11 +40,11 @@ Detection order:
 3. BMAD skills present but neither signal → **unknown**; ask the user (or, in headless mode, record `unknown` and block skill-dependent actions).
 4. No BMAD skills under the project root → **unknown**; the conductor can still plan, but every skill-dependent action is `blocked` until BMAD is installed.
 
-Tell the user the detected model once, plainly. Do not make them choose unless detection is `unknown`. Write a model only when the detector confirmed it or the user answered the question explicitly.
+Tell the user the detected model once, plainly. Do not make them choose unless detection is `unknown`.
 
 ## Skill mapping
 
-Per-action resolution — PRD, UX, architecture, stories, sprint, tests, build, review, walkthrough, retrospective, and mid-flight change — is in the `v6 skill` and `Current-model skill` columns of `phase-map.md`; the current-model skill is also the alias when the model's skill is absent. Only these capabilities have no per-action row:
+Per-action resolution is in the `v6 skill` and `Current-model skill` columns of `phase-map.md`; the current-model skill is also the alias when the model's skill is absent. Only these capabilities have no per-action row:
 
 | Capability | v6 | Current |
 |---|---|---|
@@ -68,12 +68,12 @@ Never call a skill that is not installed. Never claim an artifact was produced b
 
 | Situation | Behavior |
 |---|---|
-| Core skill missing (e.g., no `bmad-build`) | Set `status` to `blocked` in the emitted block. Say: "`bmad-build` is not installed under this project. Re-run the BMAD installer for this project, then return." Name the skill from `next_action.skill`, not an unlisted persona agent. Do not invent an installer command. Record the reason with `set --workstream <id> --path phases.<phase>.note --value "missing: bmad-build"`; do not mark the phase `blocked` (that replaces the action with `<phase>.unblock`). |
+| Core skill missing (e.g., no `bmad-build`) | Set `status` to `blocked` in the emitted block. Say: "`bmad-build` is not installed under this project. Re-run the BMAD installer for this project, then return." Name the skill from `next_action.skill`, not an unlisted persona agent. Do not invent an installer command. Record the reason with `set --workstream <id> --path phases.<phase>.note --value "missing: bmad-build"`; do not mark the phase `blocked` (that replaces the action with `<phase>.unblock`). `next_action.skill_installed: false` triggers this rule; so does `skill_manifest_only: true`, where the installer declared the name but no readable `SKILL.md` exists. |
 | Audit review skill missing | If neither `bmad-code-review` nor `bmad-build`'s built-in review is available, block `build.review` and name the install step. |
-| Test skills missing | `solution` and `verify` gates become `blocked` unless the user accepts a manual substitute (e.g., run the project's own test suite) and records an override. |
+| Test skills missing | The `solution` and `verify` actions are blocked unless the user accepts a manual substitute (e.g., run the project's own test suite) and records an override. |
 | Hub missing but focused skills present | Use the conductor's own menu; do not require `bmad-help`. |
-| Model `unknown` | Ask one question: "Which BMAD flow is installed — v6 (epics + sprint-status) or current (Sofia + tickets.toml)?" Record the answer with `init --model` on first creation, or `set --path bmad.model` on an existing ledger; that `set` needs `--reason` to downgrade a confirmed model or to reopen a phase. In headless mode, record `unknown` and block skill-dependent actions. |
-| No BMAD at all | Offer to stop so the user can install BMAD, or run in "plan-only" mode: record the missing install, set `status: blocked` on every skill-dependent action, and leave the gates `open`. Never fake progress. |
+| Model `unknown` | Ask one question: "Which BMAD flow is installed — v6 (epics + sprint-status) or current (Sofia + tickets.toml)?" Record the answer with `init --model` on first creation, or `set --path bmad.model` on an existing ledger. A later `set` from a confirmed model to `unknown`, or a change that reopens a phase, needs `--reason`. In headless mode, record `unknown` and block skill-dependent actions. |
+| No BMAD at all | Offer to stop so the user can install BMAD, or run in "plan-only" mode: record the missing install, emit `status: blocked` for every skill-dependent action, and leave the gates `open`. Never fake progress. |
 
 ## Current-model notes
 

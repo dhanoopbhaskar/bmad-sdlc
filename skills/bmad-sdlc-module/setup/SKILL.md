@@ -11,7 +11,7 @@ Install the conductor into a project's skills directory and register its module 
 
 - `{module-root}` — this module package's root (the parent of this `setup/` directory).
 - `{project-root}` — the project that will receive the skill (`_bmad/` lives here).
-- Optional argument: a skills directory. Default `.agents/skills`; use `.claude/skills` for Claude Code, `.cline/skills` for Cline, and so on.
+- Optional argument: a skills directory; step 2 resolves the default.
 
 ## Steps
 
@@ -56,9 +56,11 @@ Install the conductor into a project's skills directory and register its module 
      --name "<project-name>" --track <track> --size <size> \
      --default-track <default-track> --default-size <default-size>
    ```
-   - **Track and size.** State both you inferred, with `feature` and `one-session` as the fallbacks; ask only when the signals conflict. A `fix` or `audit` defaults to size `one-session`.
+   - **Track and size.** State both you inferred; when a signal is absent, use the resolved `default_track` and `default_size` from the customization step below. Ask only when the signals conflict. A `fix` or `audit` defaults to size `one-session`.
    - **Resolve customization first.** Read `_bmad/custom/bmad-sdlc.toml` (team) or `_bmad/custom/bmad-sdlc.user.toml` (personal) with `_bmad/scripts/resolve_customization.py`, and pass its `default_track`, `default_size`, `ledger_path`, and `memlog_path`. The command's built-in defaults mirror the shipped `customize.toml`, not the override.
-   - **Housekeeping.** The ledger and audit trail must resolve inside the project root; on an existing ledger the same command appends a workstream and pauses the previously active one. Add the resolved ledger directory's `*.lock` and `.tmp/` entries to the target project's `.gitignore` (by default `_bmad-output/sdlc/*.lock` and `_bmad-output/sdlc/.tmp/`).
+   - **Housekeeping.** The ledger and audit trail must resolve inside the project root. Add the resolved ledger directory's `*.lock` and `.tmp/` entries to the target project's `.gitignore` (by default `_bmad-output/sdlc/*.lock` and `_bmad-output/sdlc/.tmp/`).
+
+   The same command also works on an existing ledger: it appends a workstream and pauses the previously active one.
 
 7. **Confirm.** Report:
    - skill path and installed version (`<skills-dir>/bmad-sdlc/VERSION` against `{module-root}/module.yaml`)

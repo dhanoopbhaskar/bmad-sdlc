@@ -12,18 +12,18 @@ Instead of choosing among `bmad-prd`, `bmad-architecture`, `bmad-create-epics-an
 - **Keeps a durable plan** — a committed ledger at `_bmad-output/sdlc/plan.yaml` plus an append-only `.memlog.md`.
 - **Presents a two-level menu** — phase first (Plan / Solution / Build / Verify / Close), then the legal actions for that phase, each with its role, skill, and gate.
 - **Hands off in fresh context** — seeds a subagent with the objective, inputs, settled decisions, expected output, and gate criteria; validates the artifact before accepting it.
-- **Gates every phase** — summary + `Approve / Revise / Run reviewer / Skip with override`. Overrides require a reason: the helper rejects an override that has none, and `validate` fails on any that slipped through.
+- **Gates every phase** — summary + `Approve / Revise / Run reviewer / Skip with override`. Overrides require a reason: the ledger helper rejects an override that has none, and `validate` fails on any that slipped through.
 - **Right-sizes the gates** — a trivial fix goes build → review → done; an audit starts at review; epic/project gets the full gate set. Gate levels are resolved from track, size, and model.
-- **Records per-ticket gates** — `ticket`, `tests`, `review`, and `done` live under `tickets.<id>.gates`, while BMAD artifacts remain the status truth.
+- **Records per-ticket gates** — `ticket`, `tests`, `review`, and `done` are decided per ticket.
 - **Treats BMAD artifacts as truth** — the ledger stores the SDLC overlay and pointers, not ticket statuses. The conductor re-reads `sprint-status.yaml` or `tickets.toml` on every activation.
 - **Covers four tracks** — greenfield, feature, fix, and audit.
-- **Degrades honestly** — a missing skill is reported and the action is blocked; it is never silently substituted or faked.
+- **Degrades honestly** — a missing skill is reported and the action is blocked; the skill is never silently substituted or faked.
 
 ---
 
 ## What BMAD is
 
-BMAD is an **agentic agile delivery framework**: named personas own phases, each persona advances a different unit of work, and each phase leaves artifacts the next phase consumes. The core loop is **Clarify → Plan → Build and verify → Learn and adjust**, right-sized into trivial, one-session, epic, and project. `docs/bmad-sdlc.md` §5 has the path and persona tables.
+BMAD is an **agentic agile delivery framework**: named personas own phases, each persona advances a different unit of work, and each phase leaves artifacts the next phase consumes. The core loop is **Clarify → Plan → Build and verify → Learn and adjust**, right-sized into trivial, one-session, epic, and project. `docs/bmad-sdlc.md` §5 has the right-sized paths and points to the persona table in `phase-map.md`.
 
 The repository has **v6.12.4** installed (`bmad-help`, epics/stories, `sprint-status.yaml`), while the current BMAD docs describe a newer model (`bmad` hub, Sofia `bmad-agent-po`, `tickets.toml`). `bmad-sdlc` detects which one is present and routes accordingly.
 
@@ -85,7 +85,7 @@ Two layers, both committed: the plan and its audit trail.
 
 The design document and decision log live in [`docs/bmad-sdlc.md`](docs/bmad-sdlc.md).
 
-A fresh session reads the ledger, re-runs detection, reconciles the BMAD artifacts, and resumes at the recommended action. No re-interviewing. This repo's live workstream and current position are reported by `summary`, not copied here, so the README cannot go stale.
+A fresh session reads the ledger, re-runs detection, reconciles the BMAD artifacts, and resumes at the recommended action. No re-interviewing. This repo's live workstream and current position are reported by `summary`, not copied here, so this section cannot go stale.
 
 ---
 
@@ -94,6 +94,7 @@ A fresh session reads the ledger, re-runs detection, reconciles the BMAD artifac
 ```text
 .agents/skills/bmad-sdlc/
   SKILL.md                       # activation, conductor loop, gates, resumption
+  VERSION                        # shipped skill version
   customize.toml                 # workflow customization surface
   references/
     phase-map.md                 # tracks, sizing, roles, per-track flows
@@ -102,6 +103,7 @@ A fresh session reads the ledger, re-runs detection, reconciles the BMAD artifac
     version-adapters.md          # v6 vs current detection + skill mapping
     handoff-protocol.md          # subagent brief, return contract, fallbacks
     menu.md                      # dashboard, phase menu, action menu, verbs
+    headless.md                  # unattended contract: emit, stop at the gate
   assets/plan-template.yaml
   evals/                         # cases, trigger queries, adapter, run notes
   scripts/sdlc_plan.py           # detect/init/validate/summary/set/append/ticket/done/migrate/resize/reconcile/verify-return/log

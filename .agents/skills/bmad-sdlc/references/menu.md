@@ -14,7 +14,7 @@ The conductor is menu-driven. Every activation and every transition ends with a 
 
 ## Dashboard
 
-Render it first, and keep it scannable. Compute each row's totals from `summary.phases[]` (`required_open`, `conditional_open`, `optional_open`), not from this example: the flat top-level lists are totals and include per-ticket gates. `plan.sprint` is required only for v6 `epic`/`project`; a workstream whose track is `fix` or whose size is `trivial` starts in Build. Mark a `blocked` gate distinctly from `open`.
+Render it first, and keep it scannable. Compute each row's totals from `summary.phases[]` (`required_open`, `conditional_open`, `optional_open`), not from this example: the flat top-level lists are totals and include per-ticket gates. Mark a `blocked` gate distinctly from `open`.
 
 When no ledger exists, do not render the phase menu. Show the short status (no ledger, no active workstream) and offer to start one; that satisfies the status-only path without inventing a workstream.
 
@@ -33,12 +33,14 @@ Next recommended: plan.stories — break the spec into epics and stories
                   (product-owner · bmad-create-epics-and-stories)
 ```
 
-Show `optional_actions` separately; they are offered, never required. `close.mark_done` appears as the next action once every required/conditional gate is decided.
+Show `optional_actions` separately; they are offered, never required. `close.mark_done` appears as the next action once every required/conditional gate is decided and no gate at any level is blocked.
 
 If there are multiple workstreams, add one line per workstream below the active one, using `summary.workstreams_detail` (id, name, track, size, status, next action):
 
 ```text
-Other workstreams: ws-002 <name> (paused, feature, epic), ws-003 <name> (done, fix)
+Other workstreams:
+ws-002 <name> (paused, feature, epic)
+ws-003 <name> (done, fix)
 ```
 
 ## Phase menu
@@ -97,7 +99,7 @@ Natural language works, but these verbs are stable:
 | `switch <workstream>` | Change the active workstream; the previous active one is paused. |
 | `resize <track> <size>` | Change track or size; recomputes every level and phase gate. |
 | `pause` / `resume <workstream>` | Change workstream status; resume needs the id because pause clears `active_workstream`. |
-| `done` | Mark the workstream done once every required/conditional gate is decided. |
+| `done` | Mark the workstream done once every required/conditional gate is decided and no gate is blocked. |
 | `reopen <gate> <reason>` | Return a decided gate to `open`; requires a reason. If the gate's phase or workstream is `done`, reopen that first. |
 | `help` | Explain the current position and the legal moves. |
 | `quit` | Exit; every write is already recorded. |
@@ -106,7 +108,7 @@ If the user types a skill name directly (e.g., `bmad-prd`), treat it as `run pla
 
 ## Status view
 
-`status` shows the dashboard rows, then per workstream: artifact paths, every gate with its level, status, and `decided_at`, ticket gate state, decisions, and overrides with reasons. Show `blocked` gates with the missing path, and show `reconcile`'s `missing_evidence`, `phases_to_block`, and `ambiguous_pointers` (several files match one artifact key). A `<phase>.unblock` next action means that phase is blocked with no gate left to show: resolve the blocker, then clear the phase with `set --workstream <id> --path phases.<phase>.status --value active --reason <why>`. Read ticket status from `sprint-status.yaml` or `tickets.toml` every time. If the read fails, say so and show the last known state; do not invent.
+`status` shows the dashboard rows, then per workstream: artifact paths, every gate with its level, status, and `decided_at`, ticket gate state, decisions, and overrides with reasons. Show `blocked` gates with the missing path, and show `reconcile`'s `missing_evidence`, `phases_to_block`, and `ambiguous_pointers` (several files match one artifact key). A `<phase>.unblock` next action means that phase is blocked with no gate left to show: resolve the blocker, then clear the phase with `set --workstream <id> --path phases.<phase>.status --value active --reason <why>`. Finish or block any other active phase first; only one phase may be active. Read ticket status from `sprint-status.yaml` or `tickets.toml` every time. If the read fails, say so and show the last known state; do not invent.
 
 ## After an action
 

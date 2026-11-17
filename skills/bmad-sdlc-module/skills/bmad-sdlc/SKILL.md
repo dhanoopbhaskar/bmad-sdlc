@@ -7,7 +7,7 @@ description: 'Conducts the BMAD delivery lifecycle from one durable plan. Use wh
 
 ## Overview
 
-**Goal:** one skill for the whole lifecycle: where the work is, what is next, who owns it, and what must be true before advancing. The plan persists across sessions.
+**Goal:** one skill for the whole lifecycle: where the work is, what is next, who owns it, and what must be true before advancing. The ledger persists across sessions.
 
 It coordinates BMAD skills rather than replacing them: it routes, validates the artifact, and asks at the gate. BMAD artifacts are the source of truth for ticket/story status; the ledger is an overlay. Track and size change which gates are required, not the loop.
 
@@ -45,12 +45,13 @@ Run in order.
    ```bash
    uv run --no-cache {skill-root}/scripts/sdlc_plan.py detect --project-root {project-root}
    ```
-   Detection is project-local. If `unknown`, ask the question in `references/version-adapters.md`; never infer from skills seen elsewhere. Headless: record `unknown` and mark skill-dependent actions `blocked`. Write the model only when detection confirmed it or the user answered; `--reason` to downgrade or reopen a phase. A silent detector never overwrites it.
+   Detection is project-local; never infer from skills seen elsewhere. Write the model only when detection confirmed it or the user answered; `--reason` to downgrade or reopen a phase. A silent detector never overwrites it.
 
 5. Load or create the ledger.
    - If `{workflow.ledger_path}` exists, read it and `{workflow.memlog_path}`.
-   - If absent and the user asked only for status, report that and offer to start; ask for the name, track, and size, or state the configured defaults. Never invent a phase or workstream, and do not ask about the BMAD model until the user chooses to start.
-   - Otherwise infer the name and state the detected `track` and `size`, naming the configured defaults when a signal is absent; ask only when signals conflict. Sizing defaults: `references/phase-map.md` §Sizing.
+   - If absent but artifacts exist, offer to reconstruct the ledger and log a decision; never start a blank plan over real artifacts.
+   - If absent and the user asked only for status, report that and offer to start; if they accept, ask for the name, track, and size. Never invent a phase or workstream, and do not ask about the BMAD model until the user chooses to start; then ask the question in `references/version-adapters.md` §Missing-skill behavior.
+   - Otherwise infer the name and state the detected `track` and `size`; when a signal is absent, name the configured default. Ask only when signals conflict. Sizing defaults: `references/phase-map.md` §Sizing.
    - Create or add the workstream:
      ```bash
      uv run --no-cache {skill-root}/scripts/sdlc_plan.py init \
@@ -69,18 +70,16 @@ Run in order.
    uv run --no-cache {skill-root}/scripts/sdlc_plan.py reconcile \
      --plan {workflow.ledger_path} --project-root {project-root}
    ```
-   Follow `references/ledger-schema.md` §Resume semantics for `gates_to_block`, `missing_evidence`, `phases_to_block`, and drift. Treat status surfaces as read-only; artifacts win. Do not re-interview about settled decisions.
+   Follow `references/ledger-schema.md` §Resume semantics for `gates_to_block`, `missing_evidence`, `phases_to_block`, and drift. Treat ticket status as read-only; artifacts win. Do not re-interview about settled decisions.
 
-7. Run `summary --plan {workflow.ledger_path} --project-root {project-root}`; the menu renders its `required_open`, `conditional_open`, and `optional_open`. `next_action.skill_installed: false` triggers the missing-skill rule.
+7. Run `summary` with the step 6 flags; the menu renders the per-phase `required_open`, `conditional_open`, and `optional_open` from `summary.phases[]` (the flat top-level lists are totals that include per-ticket gates). `next_action.skill_installed: false` or `next_action.skill_manifest_only: true` triggers the missing-skill rule.
 
 8. Run `{workflow.activation_steps_append}`, then render `references/menu.md`.
-
-A fresh session with a ledger is normal: follow `references/ledger-schema.md` §Resume semantics, then show the dashboard. If the ledger is missing but artifacts exist, offer to reconstruct it and log a decision.
 
 ## The loop
 
 1. The user picks a phase and action, or accepts the recommendation.
-2. Resolve the action from `references/phase-map.md`. Every action names its owner (`analyst`, `product-manager`, `ux-designer`, `architect`, `product-owner`, `developer`, `test-architect`, `quality`; see §Role labels in that file). Missing skill: resolve an alias; if none, set `status` to `blocked` in the emitted block, keep the action id with a `reason`, and name the install step. Do not mark the phase `blocked` or switch to `<phase>.unblock` (`references/version-adapters.md`).
+2. Resolve the action from `references/phase-map.md`. Every action names its owner (`analyst`, `product-manager`, `ux-designer`, `architect`, `product-owner`, `developer`, `test-architect`, `quality`; see §Role labels in that file). Missing skill: resolve an alias; if none, follow `references/version-adapters.md` §Missing-skill behavior.
 3. Prepare the handoff per `references/handoff-protocol.md`, starting at `{workflow.handoff_preference}`; prefer a fresh subagent. Record the ledger and audit-trail SHA-256 digests.
 4. Validate the return (write its JSON to a file first) with the recorded digests:
    ```bash
@@ -92,7 +91,7 @@ A fresh session with a ledger is normal: follow `references/ledger-schema.md` §
    ```
    A `done` return needs one artifact inside `{project-root}` other than the ledger or the audit trail; open questions block it unless accepted. `ok: false` means `blocked`; judge scope and evidence.
 5. Record the event, update the ledger, and set per-ticket gates with `ticket`. Use `resize` to change track or size. When `summary` reports a phase `complete`, set it `done`. When all phases are complete, recommend `close.mark_done` and close with `done`.
-6. Present the gate per `references/gate-matrix.md`: summary, level, evidence, risk, then the four-way choice.
+6. Present the gate per `references/gate-matrix.md` §Gate interaction.
 7. Act on the choice, then re-render the menu.
 
 ## Ledger and audit
@@ -111,8 +110,8 @@ A fresh session with a ledger is normal: follow `references/ledger-schema.md` §
 - **`init --force` is destructive.** It needs `--reason`, writes `plan.yaml.bak`, and logs. Never run it headless.
 - **Never edit installer-managed `{project-root}/_bmad/_config/` files.**
 - **Capture, don't interrupt.** Log out-of-scope requests as `captured: <request>`, echo them at the next gate, and act only when scheduled.
-- **Never read, list, or traverse eval metadata.** `case.json`, `prompt.txt`, a rubric, and the skill's own `evals/` directory are harness files, not project inputs; ignore them even above the project root. `ls -R {skill-root}` is a violation because `evals/` lives under it; open only the reference file the current step names.
-- **Isolation.** `{skill-root}` may be a symlink: never chmod, write, or copy into it, and never build a `..` path out of it. Never write or probe outside `{project-root}`. Scratch goes in the `.tmp/` directory beside `{workflow.ledger_path}` and is not a deliverable.
+- **Never read, list, or traverse eval metadata.** `case.json`, `prompt.txt`, a rubric, and the skill's own `evals/` directory are harness files, not project inputs; ignore them even above the project root. `ls -R {skill-root}`, a recursive `grep`/`find` over it, and any search whose results include `evals/` are violations; open only the reference file the current step names.
+- **Isolation.** `{skill-root}` may be a symlink: never chmod, write, or copy into it, and never build a `..` path out of it. Never write or probe outside `{project-root}`. A missing `_bmad/scripts` resolver means using the shipped defaults; it is not a reason to search above `{project-root}` or through `{skill-root}/..`. Scratch goes in the `.tmp/` directory beside `{workflow.ledger_path}` and is not a deliverable.
 - **No silent success.** Report a missing artifact, a success claim without a file, or a missing skill; name any scratch file you leave behind.
 - **No scope invention.** Do not add features, tickets, or gates not asked for.
 - **Keep the plan portable.** Prefer `{project-root}`-relative paths.
