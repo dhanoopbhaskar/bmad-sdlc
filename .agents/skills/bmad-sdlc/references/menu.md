@@ -20,7 +20,7 @@ When no ledger exists, do not render the phase menu. Show the short status (no l
 
 ```text
 bmad-sdlc — <project>
-Model: v6 (bmad-help) · Active: ws-001 <name> · Track: feature · Size: epic
+Model: v6 (bmad-help) · Role: PM (phase) · Active: ws-001 <name> · Track: feature · Size: epic
 
 Phase      Status    Gate          Open
 Plan       active    required      <n required>, <n conditional>
@@ -30,7 +30,7 @@ Verify     pending   required      <n required>, <n conditional>
 Close      pending   optional      <n optional>
 
 Next recommended: plan.stories — break the spec into epics and stories
-                  (product-owner · bmad-create-epics-and-stories)
+                  (pm · bmad-create-epics-and-stories)
 ```
 
 Show `optional_actions` separately; they are offered, never required. `close.mark_done` appears as the next action once every required/conditional gate is decided and no gate at any level is blocked.
@@ -58,21 +58,21 @@ Choose a phase:
   q. Quit
 ```
 
-Mark the current phase with `→`. Mark locked phases with `·` and the missing required gate.
+Mark the current phase with `→`. Mark locked phases with `·` and the missing required gate. Mark a phase outside `current_role` with `⇄`; selecting it offers a handoff or role switch.
 
 ## Action menu
 
-After a phase is chosen, show its actions. Include the role, skill, and gate state.
+After a phase is chosen, show its actions. List only actions whose `role` field equals `current_role`, plus advisory actions. Show the role, skill, and gate state. The headless block is where the full summary lists stay verbatim.
 
 ```text
-Plan — choose an action:
-  1. plan.prd            [required]  product-manager · bmad-prd
+Plan — choose an action (PM):
+  1. plan.prd            [required]  pm · bmad-prd
      Update the PRD with the new checkout flow
      Gate: plan.requirements (open)
-  2. plan.stories        [required]  product-owner · bmad-create-epics-and-stories
+  2. plan.stories        [required]  pm · bmad-create-epics-and-stories
      Break the spec into epics and stories
      Gate: plan.stories (open)
-  3. plan.ux             [conditional]  ux-designer · bmad-ux
+  3. plan.ux             [conditional]  pm · bmad-ux
      UI is material — DESIGN.md and EXPERIENCE.md
      Gate: plan.ux (skipped: CLI only)
   4. Back

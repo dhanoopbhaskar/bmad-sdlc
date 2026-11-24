@@ -13,26 +13,22 @@ It coordinates BMAD skills rather than replacing them: it routes, validates the 
 
 ## Role-Based SDLC
 
-The conductor supports three roles that filter the available actions:
+Three roles split the actions. `references/role-config.toml` is the single source of truth for ownership; the ledger helper reads it.
 
-- **PM (Product Manager)**: `frame.*`, `plan.*` — owns Plan phase (requirements, UX, architecture, stories, sprint)
-- **DEV (Developer)**: `build.*` — owns Build phase (tickets, tests, review, done)
-- **QA (Quality)**: `solution.*`, `verify.*`, `close.*` — owns Solution, Verify, and Close phases
+- **PM (Product Manager)**: `frame.*`, `plan.*` — Plan phase
+- **DEV (Developer)**: `build.*` — Build phase
+- **QA (Quality)**: `solution.*`, `verify.*`, `close.*` — Solution, Verify, Close, and every `audit` track
 
-### Role Selection
+### Role Resolution
 
-- **Auto-detect** (default): Read current phase from ledger, map to required role
-- **Explicit**: `--role=pm|dev|qa` parameter on invocation
-- **Headless JSON**: `current_role` field indicates active role
+`summary` reports `current_role`, `role_source`, and per-action `role` / `role_allowed`. Resolution order:
 
-### Role Dispatch Logic
+1. Explicit `--role=pm|dev|qa`, passed through to `summary --role`; any other value is an error.
+2. Track override (`audit` → QA).
+3. Phase mapping (`plan` → PM, `solution` → QA, `build` → DEV, `verify`/`close` → QA).
+4. `pm` when there is no ledger or no active phase.
 
-Role is determined by:
-1. Explicit `--role` parameter (highest priority)
-2. Auto-detect from ledger's current phase (if ledger exists)
-3. Default to PM (if no ledger or no active phase)
-
-Action → role lookup uses prefix match (longest prefix wins) via `references/role-config.toml`. Unknown actions → error.
+An action's owner is resolved by `[track_action_overrides]` first, then the role prefixes. An action with no owner is an error, never a guess. Advisory actions (`advisory.*`) are offered to every role.
 
 ## Resolution rules
 
@@ -64,10 +60,9 @@ Run in order.
    ```
    Resolve names, languages, output folders, and date. Never fabricate project details; on failure use neutral defaults and say so.
 
-4. **Parse role parameter** (if provided):
-   - Read `--role=pm|dev|qa` from invocation
-   - If not provided, auto-detect from ledger (step 5)
-   - Load `references/role-config.toml` for role definitions
+4. **Read the role override** (if the user supplied one):
+   - Accept `--role=pm|dev|qa` or `--role pm`; normalize case, reject any other value with an error
+   - Do not resolve the role yet: step 8's `summary` returns `current_role`
 
 5. Detect the model:
    ```bash
@@ -93,35 +88,31 @@ Run in order.
      `init` creates the ledger or appends a workstream, pausing the previously active one. `init` records the audit path for later commands.
    - If corrupt, run `validate` and follow `references/ledger-schema.md` §Resume semantics. Never discard it silently.
 
-7. **Auto-detect role from ledger** (if no explicit --role):
-   - Read current phase from ledger (`workstreams.<id>.current_phase`)
-   - Map phase to role via `references/role-config.toml` `[phase_roles]`
-   - Default to `pm` if no active phase or ledger doesn't exist
-
-8. **Load role-specific references**:
-   - Load base: `references/phase-map.md`, `references/gate-matrix.md`, `references/handoff-protocol.md`
-   - Load role overlay: `references/<role>/phase-map.md`, `references/<role>/gate-matrix.md`
-   - Overlay wins on conflicts (base loaded first, then role overlay)
-
-9. Reconcile:
+7. Reconcile:
    ```bash
    uv run --no-cache {skill-root}/scripts/sdlc_plan.py reconcile \
      --plan {workflow.ledger_path} --project-root {project-root}
    ```
    Follow `references/ledger-schema.md` §Resume semantics for `gates_to_block`, `missing_evidence`, `phases_to_block`, and drift. Treat ticket status as read-only; artifacts win. Do not re-interview about settled decisions.
 
-10. Run `summary` with the step 9 flags; the menu renders the per-phase `required_open`, `conditional_open`, and `optional_open` from `summary.phases[]` (the flat top-level lists are totals that include per-ticket gates). `next_action.skill_installed: false` or `next_action.skill_manifest_only: true` triggers the missing-skill rule. Filter actions by current role.
+8. Run `summary` with the step 7 flags, adding `--role <role>` when the user supplied one. `summary.current_role` is authoritative and `role_source` says why (`explicit`, `track`, `phase`, `default`). `next_action.role_allowed: false` means the next action belongs to another role: confirm the handoff or switch role before acting. The menu renders the per-phase `required_open`, `conditional_open`, and `optional_open` from `summary.phases[]` (the flat top-level lists are totals that include per-ticket gates). `next_action.skill_installed: false` or `next_action.skill_manifest_only: true` triggers the missing-skill rule.
 
-11. Run `{workflow.activation_steps_append}`, then render `references/menu.md` (filtered by role).
+9. **Load references for `summary.current_role`**:
+   - Base: `references/phase-map.md`, `references/gate-matrix.md`, `references/handoff-protocol.md`
+   - Overlay: `references/<role>/phase-map.md`, `references/<role>/gate-matrix.md`
+   - When the role is `qa` and the phase is `solution`, also load `references/qa/solution-phase.md`
+   - Overlays add role notes; gate levels and the next action come from `summary`, which wins on conflicts
+
+10. Run `{workflow.activation_steps_append}`, then render `references/menu.md` filtered to `current_role` (each action's `role` field names its owner; advisory actions are open to every role). In headless mode, emit the unfiltered `summary` lists.
 
 ## The loop
 
 1. The user picks a phase and action, or accepts the recommendation.
-2. **Filter actions by current role**: Only show actions owned by the current role (per `references/role-config.toml` action_prefix matching).
-3. Resolve the action from `references/phase-map.md` (base + role overlay). Every action names its owner; missing skill: resolve an alias; if none, follow `references/version-adapters.md` §Missing-skill behavior.
+2. **Filter the menu to `current_role`**: use each action's `role` field from `summary`; offer advisory actions to any role. The headless block keeps every list verbatim.
+3. Resolve the action from `references/phase-map.md` (base + role overlay). Every action names its persona and its conductor role (`summary` reports the role); missing skill: resolve an alias; if none, follow `references/version-adapters.md` §Missing-skill behavior.
 4. **Role transition check**: If the chosen action belongs to a different role, confirm handoff or switch role explicitly.
 5. Prepare the handoff per `references/handoff-protocol.md` (base + role overlay), starting at `{workflow.handoff_preference}`; prefer a fresh subagent. Record the ledger and audit-trail SHA-256 digests.
-   - Subagent receives: `--role=<role> --ledger=<path> --action=<action>` — nothing else
+   - Subagent receives the brief from `references/handoff-protocol.md` §Brief template plus `Role: <role>`, `--role=<role> --plan=<ledger> --workstream=<id> --action=<action>`. Nothing else.
    - No session summary passed — only ledger artifacts
 6. Validate the return (write its JSON to a file first) with the recorded digests:
    ```bash
@@ -133,9 +124,9 @@ Run in order.
    ```
    A `done` return needs one artifact inside `{project-root}` other than the ledger or the audit trail; open questions block it unless accepted. `ok: false` means `blocked`; judge scope and evidence.
 7. Record the event, update the ledger, and set per-ticket gates with `ticket`. Use `resize` to change track or size. When `summary` reports a phase `complete`, set it `done`. When all phases are complete, recommend `close.mark_done` and close with `done`.
-8. **Auto-handoff on gate pass**: When a gate passes and the next action belongs to a different role, emit headless JSON with `current_role` and `next_action` (role inferred from action). See `references/handoff-protocol.md` for format.
+8. **Role handoff on gate pass**: When a gate passes and `next_action.role` differs from `current_role`, hand off per `references/handoff-protocol.md`. In headless mode emit the block with `current_role` and `next_action`; interactively ask one line and wait.
 9. Present the gate per `references/gate-matrix.md` (base + role overlay) §Gate interaction.
-10. Act on the choice, then re-render the menu (filtered by role).
+10. Act on the choice, then re-render the menu filtered to `current_role`.
 
 ## Ledger and audit
 
@@ -146,6 +137,7 @@ Run in order.
 ## Guardrails
 
 - **Ask at every gate**, optional ones included, in one line.
+- **One role at a time.** Never run an action whose `role` is not `current_role` (advisory actions excepted); confirm a handoff or switch role with a logged reason.
 - **Never mark a ticket `done` without an approved `build.done` gate.**
 - **Overrides need a reason.** The script rejects one without it; skipping a required or conditional gate is an override. Marking a gate `blocked` never passes it: resolve it or override with a reason.
 - **Reopen with a reason.** Moving a decided gate to open, blocked, or another decision — including back to `passed` — needs `--reason`. A done workstream accepts no gate or phase writes until you reopen it with `--reason`; a paused one refuses writes.
@@ -173,11 +165,11 @@ Load only what the current step needs.
 | `references/menu.md` | At activation and after every transition; status or help. |
 | `references/headless.md` | Headless mode (`ask_at_every_gate` false or the user says headless). |
 | `assets/plan-template.yaml` | Writing or recreating the ledger shape. |
-| `references/role-config.toml` | At activation; role definitions, action-to-role mapping, phase-to-role mapping. |
+| `references/role-config.toml` | At activation; the single source of truth for role ownership, phase and track mappings. |
 | `references/<role>/phase-map.md` | After base phase-map; role-specific actions and gates (overlay). |
 | `references/<role>/gate-matrix.md` | After base gate-matrix; role-specific gate considerations (overlay). |
 | `references/qa/solution-phase.md` | QA role in Solution phase. |
 
-**Loading order**: Base files first, then role overlays. Overlay wins on conflicts.
+**Loading order**: Base files first, then role overlays. Overlays add role notes; `summary` wins on gate levels and the next action.
 
 When two sources disagree: this file and the reference the current step named define intent; `gate-matrix.md` defines gate levels; `summary` is authoritative at runtime because it resolves levels from track, size, and model. Report drift as a finding instead of silently picking a side.

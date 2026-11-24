@@ -326,3 +326,55 @@ Source: `2026-11-17-bmad-sdlc-r9.md` / `.findings.json` (82 findings: 15 adversa
 - **Structure (31):** applied the budget and duplication fixes. `SKILL.md` moved Headless to `references/headless.md` and is 2,495 tokens (budget 2,500); `ledger-schema.md` is 4,412 (budget 4,500). The three PRESERVE rows were kept. The remaining rows are editorial moves that do not change a rule; the false `step files` and `{repo}` claims were corrected.
 - **Prose (18):** all applied, including the `resume trail` contradiction, the eval README's input count, the `byte-identical to the hashes` wording, the `--plan` rule, the setup `.gitignore` path, the memlog correction pointer, and the `§ Resume semantics` spacing.
 - **Evals:** the pre-fix run graded 110/112 (failures: `status-empty` default wording, `fix-trivial-ready` symlinked out-of-root resolution). The post-fix run graded **109/112**: both pre-fix failures are gone; the three remaining rows are harness path isolation (`continue-with-ledger` ×2 for a `../../../_bmad` symlink resolution, `start-greenfield` ×1 for a `/tmp` scratch write). Those are documented harness/model limits, and `references/headless.md` now names the system temp directory explicitly.
+
+## Round 11 review (2026-11-24, open)
+
+Source: `2026-11-24-bmad-sdlc-r11.md` / `.findings.json` (23 findings: 5 adversarial, 9 edge-case, 4 verification-gap, 2 structure; overlaps kept).
+
+Scope: the new role-based SDLC split (PM/DEV/QA) on top of HEAD `19f68f2` plus the staged working-tree changes. Status: `[ ]` open, `[~]` in progress, `[x]` fixed, `[-]` deferred (reason).
+
+Verification state at review time: **259/259** unit tests pass; **12/12** quality eval cases executed and graded pass; `package.sh --check` in sync. The eval pass is not evidence for the role feature — its only role case is confounded (V1).
+
+Highest-impact open items: `summary` drops the role fields on a paused or closed workstream (A1); the role is resolved from the recommended phase, not the active phase, so `close.mark_done` flips a trivial fix to QA (A2); the handoff table has no PM→QA or QA→DEV row (A7); DEV owns review and done, defeating separation of duties (A6); a malformed role config bricks every subcommand (A4).
+
+### Phase 0 — decisions (record as D28 in `docs/bmad-sdlc.md`)
+
+- [ ] **D1** Decide whether `build.review`/`build.done` move to QA.
+- [ ] **D2** Decide whether a role switch is persisted (`role_override` + `role` verb) or removed.
+- [ ] **D3** Decide whether `close.mark_done` and `<phase>.unblock` are role-free conductor actions.
+
+### Phase 1 — runtime
+
+- [ ] **A1** `summary` emits `current_role`/`role_source` with no active workstream; paused/closed tests added.
+- [ ] **A2** Role resolves from `workstream.current_phase`; the stored phase is not rewritten in the response.
+- [ ] **A3** Role selection persists across commands and is logged (per D2).
+- [ ] **A4** Role config loads lazily; a broken TOML fails only `summary`, never `detect`/`init`/`validate`/`--help`.
+- [ ] **A5** An unowned action or unmapped phase fails with JSON naming it.
+- [ ] **E1** Role config validates types, role names, and phases consistency; `[advisory]` and `roles.*.phases` are used or deleted.
+- [ ] **E2** `--role` lowercases and returns JSON on an invalid value.
+- [ ] **E3** Headless defines `blocked` for `role_allowed: false`.
+- [ ] **E4** `phases[]` and `workstreams_detail` carry `role`.
+- [ ] **E5** The handoff payload drops or implements `--action`; `verify-return` checks role/action.
+- [ ] **E6** Per-ticket recovery uses the `ticket` command; `unknown gate` names valid ids.
+- [ ] **E7** Skill-less conductor actions are role-free (per D3).
+
+### Phase 2 — ownership and handoff documents
+
+- [ ] **A6** Review and done ownership match the Phase 0 decision in config, overlays, and `phase-map.md`.
+- [ ] **A7** The transition table gains PM→QA and QA→DEV; PM→DEV is qualified to skipped-solution tracks; overlays point at one table.
+- [ ] **A8** The handoff trigger is `role_allowed: false`; DEV→QA fires on phase completion.
+- [ ] **A9** One blocked-handoff shape with a typed `blocked_by` array.
+- [ ] **A10** Gate writes and accepted returns record and verify the acting role.
+
+### Phase 3 — verification
+
+- [ ] **V1** `role-explicit-qa` stages plan skills and fails a role-blind run; a control run without `Role:` reaches `frame.spec`.
+- [ ] **V2** Role tests derive the action set from the script and import the resolver; `--model` is explicit.
+- [ ] **V3** `DEFAULT_ROLE_CONFIG` is asserted equal to `role-config.toml`, or removed.
+- [ ] **V4** An interactive menu case covers role filtering; `Role: <role>` is documented or the case input changes.
+- [ ] Re-run quality plus baseline after Phases 1–2; grade every transcript per `evals/README.md`.
+
+### Phase 4 — structure and hygiene
+
+- [ ] **S1** Collapse the action/gate/handoff duplication to one table each with a `Role` column and links.
+- [ ] **S2** Update the design-doc header for D27 and D5; move the trigger caveat; fix the duplicate and missing rubric lines.

@@ -9,7 +9,7 @@ This overlay provides QA-specific gate considerations. Load after the base gate-
 | `solution.test_design` | Conditional for epic/project. Test design must rank risks, name test levels/environments, and have coverage targets. |
 | `solution.framework` | Conditional for epic/project. Framework scaffold must run smoke test. |
 | `solution.ci` | Conditional for epic/project. CI config must run tests and fail on test failure. |
-| `verify.trace` | Required for epic/project/audit. Traceability matrix + gate decision. Every requirement/ticket maps to test or explicit gap. Gate is PASS or CONCERNS with named gaps. |
+| `verify.trace` | Required for epic/project/audit; conditional for one-session/fix; optional for trivial. `summary` resolves the level. Traceability matrix + gate decision. Every requirement/ticket maps to test or explicit gap. Gate is PASS or CONCERNS with named gaps. |
 | `verify.nfr` | Conditional for epic/project/audit. Performance/security/reliability requirements must have evidence or named gaps. |
 | `verify.test_review` | Conditional for epic/project/audit. Coverage, isolation, determinism assessed; blocking issues named. |
 | `close.retro` | Optional (recommended per epic). Retro document + verdict; findings cite evidence; action items have owners; verdict accept/reject. |
@@ -26,16 +26,18 @@ This overlay provides QA-specific gate considerations. Load after the base gate-
 ## Blocked Gate Handling
 
 When `verify.trace` is `blocked`:
+
 - Missing traceability matrix or evidence
-- QA reports: "Blocked: waiting for trace matrix at /path/to/trace.md → verify.trace gate not passed"
-- No forced revise - must wait or switch role
-- Ledger gate stays `blocked` with pointer
+- QA reports: "Blocked: waiting for the trace matrix at /path/to/trace.md → `verify.trace` gate not passed"
+- The conductor records the gate with `set --value blocked --reason "<why>"`; QA never writes the ledger
+- No forced revise — wait, switch role, or override with a reason
 
 ## Rollback Rules
 
-If QA entry gate fails:
-- `verify.trace` reverts to `blocked` with pointer to failed artifact
-- Headless JSON emits: `{"status": "blocked", "blocked_by": ["verify.trace"], "pointer": "/path/to/trace.md", "current_role": "qa"}`
+If QA's entry gate fails:
+
+- The conductor records the source gate as `blocked` with a reason and pointer to the failed artifact, then re-runs `summary`
+- Headless JSON keeps the `summary` shape and adds: `{"status": "blocked", "blocked_by": ["verify.trace"], "pointer": "/path/to/trace.md", "current_role": "qa"}`
 
 ## Handoff Rules
 

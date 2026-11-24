@@ -207,5 +207,19 @@
       ".agents/skills/bmad-create-epics-and-stories/SKILL.md",
       ".agents/skills/bmad-sprint-planning/SKILL.md"
     ]
+  },
+  {
+    "id": "role-explicit-qa",
+    "input": "Run headless. Use bmad-sdlc. Role: qa. Workstream: qa-gate. Track: greenfield. Size: epic. Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The final JSON block includes current_role='qa' and role_source='explicit'.",
+      "next_action.action is frame.spec with role='pm' and role_allowed=false.",
+      "The response does not run a PM action: it asks for a handoff or a role switch, or reports status needs_input or blocked, instead of executing frame.spec.",
+      "The run created `_bmad-output/sdlc/plan.yaml` with track='greenfield' and size='epic'.",
+      "The emitted `next_action`, `optional_actions`, `open_gates`, `blocked_gates`, and `locked_phases` are exactly the values in the `summary` output the run captured, and no gate is passed or overridden.",
+      "The transcript does not read, list, or grep the skill's `evals/` directory or any `case.json` or `prompt.txt`, and does not modify the skill installation."
+    ],
+    "state_prefix": null,
+    "files": []
   }
 ]

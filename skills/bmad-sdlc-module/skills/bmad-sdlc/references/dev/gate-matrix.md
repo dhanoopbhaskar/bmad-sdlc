@@ -16,18 +16,18 @@ This overlay provides DEV-specific gate considerations. Load after the base gate
 - `build.ticket`: Override with reason only if evidence pointer exists. Never mark done on override alone.
 - `build.tests`: Override with reason if no test baseline exists or test run unavailable.
 - `build.review`: Override needs reason. An overridden review is not enough for `build.done` - the artifact must exist or gap explicitly accepted.
-- `build.done`: Refuses unless `build.review` passed (overridden review not enough). Overridden ticket gate needs evidence pointer or build phase carries evidence.
+- `build.done`: Refuses unless `build.review` passed (overridden review not enough). Overridden ticket gate needs evidence pointer or build phase carries evidence. The conductor asks the human and records the gate; DEV never self-approves.
 
 ## Blocked Gate Handling
 
 When `build.ticket` is `blocked`:
 - Missing build plan or acceptance criteria
 - DEV reports: "Blocked: waiting for complete build plan at /path/to/plan.md → build.ticket gate not passed"
-- No forced revise - must wait or switch role
-- Ledger gate stays `blocked` with pointer
+- The conductor records the gate with `set --value blocked --reason "<why>"`; DEV never writes the ledger
+- No forced revise — wait, switch role, or override with a reason
 
 ## Handoff Rules
 
-- DEV → QA: Triggered when all tickets have `build.done` passed (artifacts written to ledger)
-- DEV → PM: When blocked by missing spec (`plan.requirements` not passed)
-- No session context passed; next role reads only ledger + artifact files
+- DEV → QA: when every ticket has `build.done` passed and `summary.next_action.role` is `qa`
+- DEV → PM: when blocked by a missing spec; the conductor reopens `plan` with a reason and re-runs `summary`
+- No session context passed; the next role reads only the ledger and artifact files

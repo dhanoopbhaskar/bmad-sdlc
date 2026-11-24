@@ -20,6 +20,5 @@ This overlay provides PM-specific gate considerations. Load after the base gate-
 
 ## Handoff Rules
 
-- PM → DEV: Triggered when `plan.requirements` passes (artifact written to ledger)
-- PM → QA: Triggered when build phase complete and `verify.trace` ready
-- No session context passed; next role reads only ledger + artifact files
+- PM → DEV: when every required/conditional `plan.*` gate is decided and `summary.next_action.role` is `dev`
+- No session context passed; the next role reads only the ledger and artifact files

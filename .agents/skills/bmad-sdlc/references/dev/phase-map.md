@@ -32,10 +32,12 @@ DEV-specific gate considerations:
 
 ## Handoff Points
 
+Role follows the phase: reopen `plan` (with a reason) and re-run `summary` when work returns to PM.
+
 DEV transitions to QA when:
-- All tickets in current sprint/iteration have `build.done` passed
+- Every ticket in the current sprint/iteration has `build.done` passed
 - `build.review` is satisfied (built-in or separate review)
 
 DEV transitions back to PM when:
-- Blocked by missing/incomplete spec: `plan.requirements` gate not passed
-- New requirements discovered during build that need PM clarification
+- Blocked by a missing or incomplete spec: reopen `plan` and record why `plan.requirements` is blocked
+- New requirements need PM clarification

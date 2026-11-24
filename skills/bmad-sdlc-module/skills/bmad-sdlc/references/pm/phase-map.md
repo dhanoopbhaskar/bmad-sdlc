@@ -25,18 +25,12 @@ These are the actions owned by the Product Manager role:
 PM-specific gate considerations:
 
 - `plan.requirements`: Satisfied by `frame.spec` or `plan.prd`. PM should verify the artifact exists and is complete.
-- `plan.ux`: Optional for CLI-only tools. PM can skip with reason if UI is not material.
-- `plan.architecture`: Conditional. PM should engage architect if 2+ units need to adopt a decision.
+- `plan.ux`: Conditional for a product with a UI; skip with a reason when UI is not material.
+- `plan.architecture`: Conditional when 2+ units must adopt a decision; skip with a reason otherwise.
 - `plan.stories`: Required for epic/project tracks. PM ensures stories are ordered with deliverables and verification.
 - `plan.sprint`: Required for v6 model. PM ensures valid sprint-status.yaml with proper story statuses.
 
 ## Handoff Points
 
 PM transitions to DEV when:
-- `plan.requirements` is passed (SPEC.md or PRD exists)
-- `plan.stories` is passed (epics/stories complete) OR track=fix with one-session size
-- `plan.sprint` is passed (for v6 model)
-
-PM transitions to QA when:
-- Build phase is complete (all tickets done)
-- `verify.trace` is ready for review
+- Every required/conditional `plan.*` gate is decided and `summary` reports a non-plan `next_action` (`next_action.role_allowed: false` with role `dev`)

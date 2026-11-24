@@ -1,56 +1,54 @@
-# Role-Based SDLC Configuration
-# Each role defines the actions it owns and the reference directory to load.
-# Actions are matched by prefix (longest prefix wins).
+# Role-based SDLC configuration.
+#
+# This file is the single source of truth for role ownership. The ledger helper
+# (`scripts/sdlc_plan.py`) reads it to report `current_role`, `next_action.role`
+# and `next_action.role_allowed` from `summary`. Do not duplicate the mapping in
+# prose; point at this file instead.
+#
+# Ownership resolution for an action id, in order:
+#   1. [track_action_overrides] key "<track>.<action>" (e.g. an audit review)
+#   2. [roles.*] action_prefixes, longest prefix wins
+#   3. no match -> unknown action (report an error; never guess)
+#
+# `phases` lists the phases a role works in. Phase-to-role detection uses
+# [phase_roles] first and [track_roles] before that.
 
 [roles.pm]
 name = "Product Manager"
-actions = ["frame.brainstorm", "frame.forge", "frame.research", "frame.brief", "frame.prfaq", "frame.spec", "plan.prd", "plan.ux", "plan.architecture", "plan.stories", "plan.sprint"]
-references = ["references/pm/"]
+action_prefixes = ["frame.", "plan."]
 phases = ["plan"]
+references = ["references/pm/"]
 
 [roles.dev]
 name = "Developer"
-actions = ["build.atdd", "build.ticket", "build.auto", "build.loop", "build.tests", "build.review", "build.done"]
-# Note: build.review and build.done are also in QA for code review, but DEV owns the build flow
-references = ["references/dev/"]
+action_prefixes = ["build."]
 phases = ["build"]
+references = ["references/dev/"]
 
 [roles.qa]
 name = "Quality"
-actions = ["solution.test_design", "solution.framework", "solution.ci", "verify.e2e", "verify.automate", "verify.test_review", "verify.nfr", "verify.trace", "close.walkthrough", "close.retro", "close.correct_course", "close.mark_done"]
+action_prefixes = ["solution.", "verify.", "close."]
+phases = ["solution", "verify", "close"]
 references = ["references/qa/"]
-phases = ["verify", "close"]
 
-# Phase-to-role mapping for auto-detection
+# Phase-to-role mapping for auto-detection.
 [phase_roles]
 plan = "pm"
-solution = "pm"  # PM owns solution setup, but can hand to test-architect for v6
+solution = "qa"
 build = "dev"
 verify = "qa"
 close = "qa"
 
-# Action-to-role lookup (prefix match, longest wins)
-# Generated from above action lists
-[[role_action_map]]
-role = "pm"
-action_prefix = "frame."
+# Track overrides win over [phase_roles]: an audit is a QA review that starts
+# in the build phase, so the whole track belongs to QA.
+[track_roles]
+audit = "qa"
 
-[[role_action_map]]
-role = "pm"
-action_prefix = "plan."
+# The audit's review gate reuses the `build.review` action id, so the track
+# override is what keeps it with QA instead of DEV.
+[track_action_overrides]
+"audit.build.review" = "qa"
 
-[[role_action_map]]
-role = "dev"
-action_prefix = "build."
-
-[[role_action_map]]
-role = "qa"
-action_prefix = "solution."
-
-[[role_action_map]]
-role = "qa"
-action_prefix = "verify."
-
-[[role_action_map]]
-role = "qa"
-action_prefix = "close."
+# Advisory actions are offered to whichever role is active.
+[advisory]
+prefix = "advisory."

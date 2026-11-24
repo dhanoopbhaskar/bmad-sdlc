@@ -61,6 +61,7 @@ D1–D25 were decided with the user on 2026-11-12; D26 was added on 2026-11-16. 
 | D24 | Review passes (2026-11-12) | **Gate state is authoritative, levels are derived.** See `docs/bmad-sdlc-build.memlog.md` for the corrections from the review passes. |
 | D25 | Module and concurrency | **Module ships as `skills/bmad-sdlc-module/` with `module-help.csv`; the ledger supports one active workstream at a time.** |
 | D26 | `bmad-loop` mapping (2026-11-16 review) | **Never name it as a skill.** `bmad-loop` is an orchestrator package, not an installed skill; `build.loop` resolves to `bmad-build-auto` and is offered only for batches the user asks for. |
+| D27 | Role split (2026-11-24) | **Three conductor roles: PM, DEV, QA.** `references/role-config.toml` is the single source of ownership (prefixes, phase mapping, track override for `audit`); `summary` reports `current_role`, `role_source`, and per-action `role`/`role_allowed`. Persona labels stay in `phase-map.md` for the skill each action calls; the conductor role decides who may run it. |
 
 D13 merged into D2; D21 merged into D9.
 
@@ -70,7 +71,7 @@ From `docs.bmad-method.org` (current) and the installed v6.12.4 skills:
 
 - The delivery loop is **Clarify → Plan → Build and verify → Learn and adjust**. Every path runs the same loop; bigger work enters earlier.
 - Four right-sized paths: **trivial** (edit → verify), **one-session** (intent → Build), **epic** (spec → stories → Build × stories → integrate → retro), **project** (shared contracts → epics repeated → integrated product).
-- **Personas advance different units.** This is the key correction to a naive "story is the unit" design. The conductor does **not** force one unit: it tracks the artifact each persona owns and advances the smallest unit that persona owns. The eight role labels, the persona each maps to, and what each owns are listed once in `references/phase-map.md` §Role labels.
+- **Personas advance different units.** This is the key correction to a naive "story is the unit" design. The conductor does **not** force one unit: it tracks the artifact each persona owns and advances the smallest unit that persona owns. The persona labels, the skill each maps to, and what each owns are listed once in `references/phase-map.md` §Role labels. The conductor-role split (PM/DEV/QA) and its resolution order live in `references/role-config.toml` (D27).
 - Current model: `bmad` hub; `bmad-agent-po` (Sofia) owns the ticket tree (`tickets.toml`, `R<n>` requirements); `bmad-build` builds one ticket per session and leaves status at `built`; the human or orchestrator marks it `done`; `bmad-retrospective` closes an epic.
 - Installed v6.12.4 model: `bmad-help` hub; `bmad-create-epics-and-stories`; `bmad-sprint-planning` writes `sprint-status.yaml`; `bmad-build` syncs sprint status. In the v6 model, the Product Owner role is split across `bmad-create-epics-and-stories` (epics/stories) and `bmad-sprint-planning` (tracking).
 

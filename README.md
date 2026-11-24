@@ -97,17 +97,20 @@ A fresh session reads the ledger, re-runs detection, reconciles the BMAD artifac
   VERSION                        # shipped skill version
   customize.toml                 # workflow customization surface
   references/
-    phase-map.md                 # tracks, sizing, roles, per-track flows
+    phase-map.md                 # tracks, sizing, personas, per-track flows
     gate-matrix.md               # required/conditional/optional gates + evidence
     ledger-schema.md             # plan.yaml shape, ownership, resume semantics
     version-adapters.md          # v6 vs current detection + skill mapping
     handoff-protocol.md          # subagent brief, return contract, fallbacks
     menu.md                      # dashboard, phase menu, action menu, verbs
     headless.md                  # unattended contract: emit, stop at the gate
+    role-config.toml             # single source of truth for PM/DEV/QA ownership
+    pm/ dev/ qa/                 # role overlays: actions, gates, handoffs
   assets/plan-template.yaml
   evals/                         # cases, trigger queries, adapter, run notes
   scripts/sdlc_plan.py           # detect/init/validate/summary/set/append/ticket/done/migrate/resize/reconcile/verify-return/log
   scripts/tests/test_sdlc_plan.py
+  scripts/tests/test_role_resolution.py
 
 skills/bmad-sdlc-module/
   README.md

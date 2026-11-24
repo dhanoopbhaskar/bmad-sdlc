@@ -53,13 +53,14 @@ Spawn the grader from `bmad-eval-runner/references/grader.md` per case, passing 
 
 ## Case state
 
-Each case exists to test what the model says or chooses; ledger behavior belongs to `scripts/tests/test_sdlc_plan.py`, which covers the deterministic write loop. Add an eval case only when the question is about the model, not about a value the unit suite can assert.
+Each case exists to test what the model says or chooses; ledger behavior belongs to `scripts/tests/`, which covers the deterministic write loop and role resolution (`test_sdlc_plan.py`, `test_role_resolution.py`). Add an eval case only when the question is about the model, not about a value the unit suite can assert.
 
 - Cases that route, recommend, or start a workstream say `Run headless.` and supply a name, track, and size. The skill's headless contract forbids a menu, so the case cannot hang waiting for an answer.
 - `continue-with-ledger` and `status-readonly` stay conversational because they finish without a menu.
 - `continue-with-ledger` stages the project's live `_bmad-output/sdlc/plan.yaml` and `.memlog.md`, because the skill reads those paths. Its rubric is state-agnostic: it asserts that the response resumes the staged workstream and its recorded next gate, not a specific `ws-001` state, so ordinary project progress does not break the case. It also asserts that the staged ledger records no new workstream, that no gate was advanced to passed or overridden, and that every file the skill writes outside the harness caches stays under `_bmad-output/sdlc/`.
 - Build-first cases (`fix-trivial`, `missing-build`, `fix-one-session`) supply name/track/size so the headless contract reaches `build.ticket` (or `build.review` for audit), then assert the missing-skill block. A `needs_input` answer is a contract failure for these cases. `feature-one-session` is planning-first: feature/one-session opens with `frame.spec`, and its rubric accepts that or `build.ticket`.
 - `fix-trivial-ready` stages a fake v6 install and asserts `status: ready`. Its `files` entries are `.agents/skills/<name>/SKILL.md`; `resolve_fixtures` preserves the entry path, so the files land where `detect` scans. See §Known limitations for the fixture and staging constraints.
+- `role-explicit-qa` supplies `Role: qa` on a greenfield epic. Its rubric asserts `current_role='qa'` with `role_source='explicit'`, that `next_action` is the PM's `frame.spec` with `role_allowed=false`, and that the response hands off or switches instead of running a PM action. Script-level role resolution is covered by `scripts/tests/test_role_resolution.py`.
 
 ## Known limitations
 

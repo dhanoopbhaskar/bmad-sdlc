@@ -323,6 +323,131 @@ def fail(message: str, code: int = 1) -> None:
     emit({"ok": False, "error": message}, code)
 
 
+# --- Roles -----------------------------------------------------------------
+#
+# Role ownership lives in references/role-config.toml, next to this script in
+# the installed skill. The defaults below keep `summary` usable from a copied
+# script with no reference tree; a malformed file is an error, not a fallback.
+
+ROLE_CONFIG_PATH = (
+    Path(__file__).resolve().parents[1] / "references" / "role-config.toml"
+)
+
+DEFAULT_ROLE_CONFIG: dict = {
+    "roles": {
+        "pm": {
+            "name": "Product Manager",
+            "action_prefixes": ["frame.", "plan."],
+            "phases": ["plan"],
+            "references": ["references/pm/"],
+        },
+        "dev": {
+            "name": "Developer",
+            "action_prefixes": ["build."],
+            "phases": ["build"],
+            "references": ["references/dev/"],
+        },
+        "qa": {
+            "name": "Quality",
+            "action_prefixes": ["solution.", "verify.", "close."],
+            "phases": ["solution", "verify", "close"],
+            "references": ["references/qa/"],
+        },
+    },
+    "phase_roles": {
+        "plan": "pm",
+        "solution": "qa",
+        "build": "dev",
+        "verify": "qa",
+        "close": "qa",
+    },
+    "track_roles": {"audit": "qa"},
+    "track_action_overrides": {"audit.build.review": "qa"},
+    "advisory": {"prefix": "advisory."},
+}
+
+
+@functools.lru_cache(maxsize=1)
+def role_config() -> dict:
+    """Load role-config.toml once; defaults when it is not installed."""
+    try:
+        with ROLE_CONFIG_PATH.open("rb") as handle:
+            data = tomllib.load(handle)
+    except FileNotFoundError:
+        return DEFAULT_ROLE_CONFIG
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        fail(f"cannot read {ROLE_CONFIG_PATH}: {exc}")
+        raise  # unreachable; fail() exits
+    if not isinstance(data.get("roles"), dict) or not data["roles"]:
+        fail(f"{ROLE_CONFIG_PATH} defines no [roles]")
+    return data
+
+
+def role_names() -> tuple[str, ...]:
+    return tuple(role_config().get("roles") or {})
+
+
+def role_for_phase(phase: str | None, track: str | None) -> str | None:
+    """Role that owns a phase; a track override wins over [phase_roles]."""
+    config = role_config()
+    if track:
+        role = (config.get("track_roles") or {}).get(track)
+        if role:
+            return role
+    if phase:
+        return (config.get("phase_roles") or {}).get(phase)
+    return None
+
+
+def role_for_action(action: str | None, track: str | None) -> str | None:
+    """Role that owns an action; track override, then longest prefix."""
+    if not action:
+        return None
+    config = role_config()
+    if track:
+        override = (config.get("track_action_overrides") or {}).get(
+            f"{track}.{action}"
+        )
+        if override:
+            return override
+    best: tuple[int, str] | None = None
+    for name, spec in (config.get("roles") or {}).items():
+        for prefix in spec.get("action_prefixes") or ():
+            if action.startswith(prefix):
+                rank = len(prefix)
+                if best is None or rank > best[0]:
+                    best = (rank, name)
+    return best[1] if best else None
+
+
+def role_allows(action: str | None, role: str, track: str | None) -> bool:
+    """Advisory actions are open to every role; the rest need an owner."""
+    if not action:
+        return True
+    prefix = (role_config().get("advisory") or {}).get("prefix")
+    if prefix and action.startswith(prefix):
+        return True
+    return role_for_action(action, track) == role
+
+
+def resolve_current_role(
+    explicit: str | None, phase: str | None, track: str | None
+) -> tuple[str, str]:
+    """Return (role, source) for the active position.
+
+    Source order: an explicit --role, a track override, the phase mapping, then
+    the pm default. Callers report the source so a surprising role is visible.
+    """
+    config = role_config()
+    if explicit:
+        return explicit, "explicit"
+    if track and (config.get("track_roles") or {}).get(track):
+        return role_for_phase(phase, track) or "pm", "track"
+    if phase and (config.get("phase_roles") or {}).get(phase):
+        return role_for_phase(phase, track) or "pm", "phase"
+    return "pm", "default"
+
+
 @contextlib.contextmanager
 def file_lock(path: Path):
     """Serialize read-modify-write cycles for a ledger or audit trail.
@@ -2710,6 +2835,19 @@ def cmd_summary(args: argparse.Namespace) -> None:
                 next_phase = phase["phase"]
                 break
     display_phase = next_phase or workstream.get("current_phase")
+    current_role, role_source = resolve_current_role(
+        getattr(args, "role", None), display_phase, track
+    )
+    if next_action is not None:
+        next_action["role"] = role_for_action(next_action.get("action"), track)
+        next_action["role_allowed"] = role_allows(
+            next_action.get("action"), current_role, track
+        )
+    for entry in optional:
+        entry["role"] = role_for_action(entry.get("action"), track)
+        entry["role_allowed"] = role_allows(
+            entry.get("action"), current_role, track
+        )
     emit(
         {
             "ok": True,
@@ -2717,6 +2855,8 @@ def cmd_summary(args: argparse.Namespace) -> None:
             "memlog": str(memlog),
             "project": data.get("project"),
             "model": model,
+            "current_role": current_role,
+            "role_source": role_source,
             "active_workstream": data.get("active_workstream"),
             "workstream": {
                 "id": workstream_id,
@@ -5592,6 +5732,11 @@ def build_parser() -> argparse.ArgumentParser:
     summary.add_argument("--workstream")
     summary.add_argument("--project-root")
     summary.add_argument("--memlog")
+    summary.add_argument(
+        "--role",
+        choices=list(role_names()),
+        help="Override auto-detected role for this read.",
+    )
     summary.set_defaults(func=cmd_summary)
 
     set_cmd = subparsers.add_parser("set")

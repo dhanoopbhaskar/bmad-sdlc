@@ -157,19 +157,17 @@ This section defines the role transition rules for the PM/DEV/QA split.
 
 ### Handoff Rules
 
-- Handoff triggered **only** when a gate passes (artifact written to ledger)
-- Next role reads **only** the ledger + artifact files — no session context, no summaries
-- Subagent receives: `--role=<role> --ledger=<path> --action=<action>` — nothing else
-- Rollback: If next role's entry gate fails, ledger gate reverts to `blocked` with pointer to failed artifact
+- Handoff triggered **only** when a gate passes and the next action's role differs from `current_role` (`next_action.role_allowed: false`).
+- Next role reads **only** the ledger + artifact files — no session context, no summaries.
+- Subagent receives the §Brief template above plus `Role: <role>` and `--role=<role> --plan=<ledger> --workstream=<id> --action=<action>` — nothing else.
+- Rollback: when the next role's entry gate fails, the **conductor** (never the handed-off role) records it with `set --workstream <id> --path gates.<phase>.<gate>.status --value blocked --reason "<gate> failed: <pointer>"`, then re-runs `summary` to re-resolve the role.
 
 ### Role Transitions
 
-| From Role | To Role | Trigger Gate | Condition |
+| From Role | To Role | Trigger | Condition |
 |---|---|---|---|
-| PM | DEV | `plan.requirements` | `passed` (SPEC.md or PRD exists) |
-| PM | DEV | `plan.stories` | `passed` (epics/stories complete) OR track=fix with one-session size |
-| PM | DEV | `plan.sprint` | `passed` (for v6 model) |
-| DEV | QA | `build.done` | All tickets in sprint have `build.done` = `passed` |
+| PM | DEV | plan phase complete | Every required/conditional `plan.*` gate decided; `next_action.phase` is no longer `plan` |
+| DEV | QA | `build.done` | Every ticket in the sprint has `build.done` = `passed` |
 | DEV | PM | `plan.requirements` | `blocked` (waiting for spec) |
 | QA | PM | `close.correct_course` | Triggers replan |
 | QA | DEV | `verify.trace` | Finds gaps requiring build fixes |
@@ -177,31 +175,39 @@ This section defines the role transition rules for the PM/DEV/QA split.
 
 ### Headless JSON (Extended)
 
-When role transitions, emit one JSON block:
+When a role transition happens in headless mode, emit the block defined in `references/headless.md` §Emitted block with the role fields below. This example is abridged; the emitted block keeps every summary list:
 
 ```json
 {
   "status": "ready",
-  "next_action": "build.ticket",  // role is inferred from action
-  "current_role": "pm"
-}
-{
-  "status": "blocked",
-  "blocked_by": ["plan.requirements"],
-  "pointer": "/path/to/SPEC.md",
-  "current_role": "dev"
+  "current_role": "dev",
+  "next_action": {
+    "phase": "build",
+    "gate": "build.ticket",
+    "action": "build.ticket",
+    "role": "dev",
+    "role_allowed": true,
+    "skill": "bmad-build",
+    "reason": "Build the next ready ticket.",
+    "source": "computed"
+  },
+  "track": "feature",
+  "size": "epic",
+  "model": "v6",
+  "assumptions": []
 }
 ```
 
-**No `next_role` field** — the role is inferred from the next action's owner (dev for `build.*`, qa for `verify.*` and `close.*`, pm for `frame.*` and `plan.*`).
+For a blocked handoff, keep the same shape with `"status": "blocked"` and add `"blocked_by"` and `"pointer"`. **No `next_role` field** — read `next_action.role` (from `role-config.toml`; an audit's `build.review` belongs to QA, not DEV).
 
 ### Blocked Gate Handling
 
-When a role is blocked by incomplete work from previous role:
+When a role is blocked by incomplete work from a previous role:
 
-- **DEV says**: "Blocked: waiting for PM complete spec at /path/to/SPEC.md → PM: `plan.requirements` gate not passed"
-- **No forced revise** — must wait or switch role
-- **Ledger gate stays**: `plan.requirements` = `blocked` with pointer
+- **DEV says**: "Blocked: waiting for PM to complete the spec at /path/to/SPEC.md → PM: `plan.requirements` gate not passed"
+- The conductor records the blocked gate with the `--reason` above; the handed-off role never writes the ledger.
+- **No forced revise** — wait, switch role, or override with a reason.
+- **Ledger gate stays**: `plan.requirements` = `blocked` with the pointer recorded in the audit trail.
 
 ### Subagent Lifecycle
 

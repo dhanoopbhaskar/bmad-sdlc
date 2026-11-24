@@ -47,4 +47,4 @@ Do not skip silently.
 After Solution phase gates pass, handoff to DEV role:
 - DEV reads test design for ATDD (`build.atdd`)
 - DEV runs tests per ticket (`build.tests`)
-- QA reads ledger + artifact files — no session context
+- DEV reads the ledger + artifact files — no session context

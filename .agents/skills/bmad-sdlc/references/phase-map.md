@@ -47,7 +47,7 @@ When two sizes both fit, choose the smaller and promote later. The user can resi
 
 ## Role labels
 
-This table names each persona and what the role owns.
+This table names each persona and what the role owns. These labels are the voice the skill uses; which conductor role (PM, DEV, QA) may run the action is resolved from the action id by `role-config.toml`.
 
 | Label | Persona | Owns |
 |---|---|---|
@@ -64,7 +64,7 @@ This table names each persona and what the role owns.
 
 Frame the intent, then define and divide the work. Actions are independent tools, not a mandatory sequence; pick what the gap calls for.
 
-| Action id | Role | v6 skill | Current-model skill | Gate |
+| Action id | Persona | v6 skill | Current-model skill | Gate |
 |---|---|---|---|---|
 | `frame.brainstorm` | analyst | `bmad-brainstorming` | `bmad-brainstorming` | — |
 | `frame.forge` | analyst | `bmad-forge-idea` | `bmad-forge-idea` | — |
@@ -90,7 +90,7 @@ Notes:
 
 Decide how the work will be verified before building. The phase gates are conditional by default; their conditions and resolved levels are in `gate-matrix.md`.
 
-| Action id | Role | v6 skill | Current-model skill | Gate |
+| Action id | Persona | v6 skill | Current-model skill | Gate |
 |---|---|---|---|---|
 | `solution.test_design` | test-architect | `bmad-testarch-test-design` | `bmad-tea` | `solution.test_design` |
 | `solution.framework` | test-architect | `bmad-testarch-framework` | `bmad-tea` | `solution.framework` |
@@ -102,7 +102,7 @@ If the project already has a mature test stack and CI, decide the solution gates
 
 The unit is **one ticket per Build session**. The conductor picks ready tickets from the BMAD artifacts; it does not invent them.
 
-| Action id | Role | v6 skill | Current-model skill | Gate |
+| Action id | Persona | v6 skill | Current-model skill | Gate |
 |---|---|---|---|---|
 | `build.atdd` | test-architect | `bmad-testarch-atdd` | `bmad-tea` | — |
 | `build.ticket` | developer | `bmad-build` | `bmad-build` | `build.ticket` |
@@ -123,7 +123,7 @@ Ready-ticket sources:
 
 ## Verify phase
 
-| Action id | Role | v6 skill | Current-model skill | Gate |
+| Action id | Persona | v6 skill | Current-model skill | Gate |
 |---|---|---|---|---|
 | `verify.e2e` | test-architect | `bmad-qa-generate-e2e-tests` | `bmad-qa-generate-e2e-tests` | — |
 | `verify.automate` | test-architect | `bmad-testarch-automate` | `bmad-tea` | — |
@@ -135,7 +135,7 @@ Ready-ticket sources:
 
 ## Close phase
 
-| Action id | Role | v6 skill | Current-model skill | Gate |
+| Action id | Persona | v6 skill | Current-model skill | Gate |
 |---|---|---|---|---|
 | `close.walkthrough` | quality | `bmad-walkthrough` | `bmad-walkthrough` | `close.walkthrough` |
 | `close.retro` | quality | `bmad-retrospective` | `bmad-retrospective` | `close.retro` |
