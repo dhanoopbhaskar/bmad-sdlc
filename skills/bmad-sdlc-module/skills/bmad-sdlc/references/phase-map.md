@@ -106,11 +106,13 @@ The unit is **one ticket per Build session**. The conductor picks ready tickets 
 |---|---|---|---|---|---|
 | `build.atdd` | dev | test-architect | `bmad-testarch-atdd` | `bmad-tea` | — |
 | `build.ticket` | dev | developer | `bmad-build` | `bmad-build` | `build.ticket` |
-| `build.auto` | dev | developer | `bmad-build-auto` | `bmad-build-auto` | `build.ticket` |
-| `build.loop` | dev | developer | `bmad-build-auto` | `bmad-build-auto` | `build.ticket` |
+| `build.auto` | dev | developer | `bmad-build-auto` | `bmad-build-auto` | — |
+| `build.loop` | dev | developer | `bmad-build-auto` | `bmad-build-auto` | — |
 | `build.tests` | dev | developer | project test runner or `bmad-build` | same | `build.tests` |
 | `build.review` | qa | quality | `bmad-code-review` or `bmad-build`'s built-in review | same | `build.review` |
 | `build.done` | qa | product-owner | `bmad-sprint-planning` status update, or user | `bmad-agent-po` ("mark story done") | `build.done` |
+
+`build.auto` and `build.loop` carry no gate of their own: they are unattended batch runs of `build.ticket`, so each built ticket still needs its own `build.ticket` gate with Given/When/Then ACs and a named verification. Neither appears as a gate action, and running one records nothing until the per-ticket `build.ticket` gate is set.
 
 Ready-ticket sources:
 
@@ -119,7 +121,7 @@ Ready-ticket sources:
 
 `bmad-build` already reviews its own work. `build.review` is satisfied by that built-in review when it ran and its findings were triaged; run `bmad-code-review` as a separate pass when the change is risky, the built-in review was skipped, or the user asks. Record which one satisfied the gate.
 
-`build.review` and `build.done` belong to QA: the DEV session produces the change and its tests, then QA decides the review and the done transition. Build advances to Verify only after QA has decided every ticket's `build.done` and `phases.build` is `done`.
+`build.review` and `build.done` belong to QA: the DEV session produces the change and its tests, then QA decides the review and the done transition. Build is therefore a **mixed phase** for QA: it is DEV's phase by mapping, but it holds the two QA gates. A QA session that needs `build.review` or `build.done` enters Build and runs only those actions; the `⇄` marker means "another role owns the phase", not "keep out". Build advances to Verify only after QA has decided every ticket's `build.done` and `phases.build` is `done`.
 
 `build.loop` (batches) resolves to `bmad-build-auto`: `bmad-loop` is an orchestrator tool installed as a separate package, not a skill, so never name it as one.
 

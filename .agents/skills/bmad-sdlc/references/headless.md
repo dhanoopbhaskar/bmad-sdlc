@@ -12,8 +12,13 @@ Load this file when `{workflow.ask_at_every_gate}` is false or the user says "he
 ## Status
 
 - **Stop at the next gate; never auto-approve.** Log an override only with a supplied reason.
-- `status` is `ready` (the next action is legal to run for `current_role`), `blocked` (missing skill, blocked gate, or a role mismatch), `needs_input` (unknown name, no ledger for a status-only request, or paused), or `done` (closed). Headless still stops before it decides a gate: when `next_action.gate` is set, that gate is awaiting a human, so do not pass it in the same turn.
-- A role mismatch is `blocked`, never `ready`: when `next_action.role_allowed` is false, emit `status: blocked` with `blocked_by` naming the action, even if the action's skill is installed. The exact block shape is in `references/handoff-protocol.md` §Headless JSON.
+- `status` is one of:
+  - `ready` — the next action is legal to run for `current_role`;
+  - `blocked` — a missing skill, a blocked gate, or a role mismatch;
+  - `needs_input` — an unknown name, no ledger for a status-only request, or a paused workstream;
+  - `done` — the workstream is closed.
+- Headless still stops before it decides a gate: when `next_action.gate` is set, that gate is awaiting a human, so do not pass it in the same turn.
+- A role mismatch is `blocked`, never `ready`, even if the action's skill is installed. Set `status: blocked` and `blocked_by` to the actions `current_role` may not run, starting with `next_action.action`. The role-mismatch fields are in `references/handoff-protocol.md` §Headless JSON.
 
 ## Defaults
 
@@ -26,4 +31,16 @@ Load this file when `{workflow.ask_at_every_gate}` is false or the user says "he
 
 ## Emitted block
 
-Emit one JSON block: `summary`'s field set (`references/ledger-schema.md` §Summary shape) plus `status`, `model`, `track`, `size`, `current_role`, `blocked_by` (when blocked), and `assumptions`; read `phase`, `next_action`, and `optional_actions` from it. `assumptions` is always an array; `track` and `size` come from `summary.workstream` when a workstream is active, otherwise from the top-level `summary.track`/`summary.size` after close. Copy every summary list you keep verbatim — never filter, reorder, or drop a gate. Role filtering applies only to the interactive menu: `current_role`, each action's `role`/`role_free`/`role_allowed`, and `phases[].role` are information here, not a filter. Omit the per-level gate lists (`required_open`, `conditional_open`, `optional_open`) and ticket detail.
+Emit exactly one JSON block. It is a projection of `summary` (`references/ledger-schema.md` §Summary shape) plus the headless keys. This list is the field set; no other file restates it.
+
+Always keep these summary keys:
+
+`project`, `ledger`, `memlog`, `active_workstream`, `workstream`, `workstreams`, `phase`, `next_phase`, `next_action`, `optional_actions`, `open_gates`, `blocked_gates`, `locked_phases`, `phases`, `workstreams_detail`, `decisions`, `cached_next_action`, `next_action_stale`.
+
+Always add: `status`, `model`, `track`, `size`, `current_role`, `assumptions`.
+
+Add when blocked: `blocked_by`, and `pointer` when one artifact unblocks the first entry.
+
+Omit these keys entirely: `required_open`, `conditional_open`, `optional_open` (the per-level tallies are derivable from `phases[]`), `tickets` (ticket detail stays in the ledger), and `actions` (menu filtering does not apply here).
+
+`assumptions` is always an array; `track` and `size` come from `summary.workstream` when a workstream is active, otherwise from the top-level `summary.track`/`summary.size` after close. Copy every list you keep verbatim — never filter, reorder, or drop a gate. `current_role`, each action's `role`/`role_free`/`role_allowed`, and `phases[].role` are information here, not a filter.

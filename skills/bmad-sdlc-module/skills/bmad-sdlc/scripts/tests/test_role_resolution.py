@@ -73,12 +73,23 @@ class RoleConfigTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = tomllib.loads(ROLE_CONFIG.read_text())
 
-    def test_default_config_matches_the_toml(self) -> None:
-        """The in-script fallback must not drift from the shipped config."""
-        self.assertEqual(sdlc.DEFAULT_ROLE_CONFIG, self.config)
-
     def test_config_validates(self) -> None:
         self.assertIs(sdlc.validate_role_config(self.config), self.config)
+
+    def test_missing_config_fails_instead_of_defaulting(self) -> None:
+        """role-config.toml is the only source; there is no built-in copy."""
+        missing = Path(tempfile.mkdtemp(prefix="bmad-sdlc-rolecfg-"))
+        self.addCleanup(shutil.rmtree, missing, True)
+        with ConsoleEscape() as escaped, self.assertRaises(SystemExit):
+            sdlc.role_config.cache_clear()
+            original = sdlc.ROLE_CONFIG_PATH
+            try:
+                sdlc.ROLE_CONFIG_PATH = missing / "role-config.toml"
+                sdlc.role_names()
+            finally:
+                sdlc.ROLE_CONFIG_PATH = original
+                sdlc.role_config.cache_clear()
+        self.assertIn("role config not found", escaped.payload()["error"])
 
     def test_every_action_has_one_owner_or_is_role_free(self) -> None:
         for action in sdlc.ALL_ACTION_IDS:
@@ -119,13 +130,21 @@ class RoleConfigTests(unittest.TestCase):
                     "dev": {**self.config["roles"]["dev"], "action_prefixes": "build."},
                 },
             },
-            "unknown role": {
+            "phase_roles unknown role": {
                 **self.config,
                 "phase_roles": {**self.config["phase_roles"], "build": "nobody"},
             },
-            "unknown role": {
+            "track_roles unknown role": {
                 **self.config,
                 "track_roles": {"audit": "nobody"},
+            },
+            "track_roles unknown track": {
+                **self.config,
+                "track_roles": {"audti": "qa"},
+            },
+            "track_action_overrides unknown track": {
+                **self.config,
+                "track_action_overrides": {"audti.verify.trace": "qa"},
             },
             "roles.phases is gone": {
                 **self.config,
@@ -661,12 +680,14 @@ class SummaryRoleTests(unittest.TestCase):
             "review",
             "--status",
             "passed",
+            "--as",
+            "qa",
             "--reason",
-            "conductor recorded QA review",
+            "QA recorded its review",
         )
         self.assertEqual(allowed.returncode, 0, allowed.stdout)
         memlog = (self.root / "_bmad-output" / "sdlc" / ".memlog.md").read_text()
-        self.assertIn("by dev", memlog)
+        self.assertIn("by qa", memlog)
 
     def test_verify_return_checks_role_and_action(self) -> None:
         self.init("fix", "trivial")
@@ -676,7 +697,12 @@ class SummaryRoleTests(unittest.TestCase):
         ledger_sha = hashlib.sha256(self.ledger.read_bytes()).hexdigest()
         memlog_sha = hashlib.sha256(memlog.read_bytes()).hexdigest()
 
-        def verify(role: str | None) -> dict:
+        def verify(
+            role: str | None,
+            action: str = "build.ticket",
+            expect_action: str = "build.ticket",
+            expect_role: str = "qa",
+        ) -> dict:
             returned = {
                 "status": "done",
                 "artifacts": [{"path": "change.md"}],
@@ -684,7 +710,7 @@ class SummaryRoleTests(unittest.TestCase):
             }
             if role is not None:
                 returned["role"] = role
-                returned["action"] = "build.ticket"
+                returned["action"] = action
             return json.loads(
                 run_full(
                     "verify-return",
@@ -699,9 +725,9 @@ class SummaryRoleTests(unittest.TestCase):
                     "--expect-memlog-sha",
                     memlog_sha,
                     "--expect-role",
-                    "qa",
+                    expect_role,
                     "--expect-action",
-                    "build.ticket",
+                    expect_action,
                 ).stdout
             )
 
@@ -715,10 +741,415 @@ class SummaryRoleTests(unittest.TestCase):
         self.assertFalse(missing["ok"])
         self.assertTrue(any("does not name a role" in reason for reason in missing["reasons"]))
 
-        accepted = verify("qa")
+        # The returned role must own the returned action; a QA label on a DEV
+        # action is exactly what verify-return exists to refuse.
+        wrong_owner = verify("qa", expect_role="qa")
+        self.assertFalse(wrong_owner["ok"])
+        self.assertTrue(
+            any(
+                "belongs to dev" in reason and "cannot return it" in reason
+                for reason in wrong_owner["reasons"]
+            )
+        )
+
+        # A return produced for a different action than the handoff is refused.
+        wrong_action = verify("qa", "build.review", expect_action="build.ticket")
+        self.assertFalse(wrong_action["ok"])
+        self.assertTrue(
+            any(
+                "does not match expected 'build.ticket'" in reason
+                for reason in wrong_action["reasons"]
+            )
+        )
+
+        accepted = verify("dev", expect_role="dev")
         self.assertTrue(accepted["ok"], accepted["reasons"])
-        self.assertEqual(accepted["role"], "qa")
+        self.assertEqual(accepted["role"], "dev")
         self.assertEqual(accepted["action"], "build.ticket")
+
+    def test_phase_gate_foreign_role_needs_a_reason(self) -> None:
+        """A phase gate is guarded like a ticket gate, not just the ticket one."""
+        self.init("fix", "trivial")
+        refused = run_full(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "gates.verify.trace.status",
+            "--value",
+            "passed",
+        )
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("belongs to qa", json.loads(refused.stdout)["error"])
+
+        allowed = run_full(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "gates.verify.trace.status",
+            "--value",
+            "passed",
+            "--as",
+            "qa",
+        )
+        self.assertEqual(allowed.returncode, 0, allowed.stdout)
+        memlog = (self.root / "_bmad-output" / "sdlc" / ".memlog.md").read_text()
+        self.assertIn("by qa", memlog)
+
+    def test_blocked_phase_recommends_unblock(self) -> None:
+        self.init("greenfield", "epic")
+        self.decide("plan", ("requirements", "stories", "sprint"), "passed")
+        self.decide("plan", ("ux", "architecture"), "skipped")
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "phases.plan.status",
+            "--value",
+            "blocked",
+        )
+        summary = self.summary()
+        self.assertEqual(summary["next_action"]["action"], "plan.unblock")
+        self.assertIsNone(summary["next_action"]["gate"])
+        self.assertIsNone(summary["next_action"]["role"])
+        self.assertTrue(summary["next_action"]["role_free"])
+        self.assertTrue(summary["next_action"]["role_allowed"])
+        self.assertNotEqual(summary["next_action"]["action"], "close.mark_done")
+
+    def test_phase_gate_lists_are_scoped_to_their_phase(self) -> None:
+        self.init("greenfield", "epic")
+        summary = self.summary()
+        self.assertTrue(summary["phases"])
+        for phase in summary["phases"]:
+            name = phase["phase"]
+            for key in (
+                "required_open",
+                "conditional_open",
+                "optional_open",
+                "open_gates",
+                "blocked_gates",
+            ):
+                for gate_id in phase[key]:
+                    self.assertTrue(
+                        gate_id.startswith(f"{name}."),
+                        f"{name}.{key} leaks {gate_id}",
+                    )
+            self.assertEqual(
+                phase["required_open"],
+                [
+                    entry["id"]
+                    for entry in phase["gates"]
+                    if entry["level"] == "required"
+                    and entry["status"] in ("open", "blocked")
+                ],
+            )
+
+    def test_workstream_detail_next_action_carries_role_fields(self) -> None:
+        self.init("fix", "trivial")
+        brief = self.summary()["workstreams_detail"][0]
+        self.assertEqual(brief["role"], "dev")
+        self.assertEqual(brief["role_source"], "phase")
+        self.assertEqual(brief["next_action"]["action"], "build.ticket")
+        self.assertEqual(brief["next_action"]["role"], "dev")
+        self.assertTrue(brief["next_action"]["role_allowed"])
+
+    def test_action_catalog_covers_gateless_actions(self) -> None:
+        self.init("greenfield", "epic")
+        catalog = self.summary()["actions"]
+        seen = {(entry["action"], entry.get("ticket")) for entry in catalog}
+        expected = (
+            {action for action, _ in sdlc.GATE_ACTIONS.values()}
+            | {action for action, _ in sdlc.TICKET_ACTIONS.values()}
+            | set(sdlc.SKILL_ACTION_IDS)
+            | set(sdlc.ROLE_FREE_ACTIONS)
+        )
+        for action in sorted(expected):
+            self.assertIn((action, None), seen, action)
+        for entry in catalog:
+            self.assertIn("role", entry)
+            self.assertIn("role_allowed", entry)
+            if sdlc.role_is_free(entry["action"]):
+                self.assertTrue(entry["role_free"], entry)
+                self.assertIsNone(entry["role"], entry)
+            else:
+                self.assertEqual(
+                    entry["role"],
+                    sdlc.role_for_action(entry["action"], "greenfield"),
+                    entry,
+                )
+
+    def test_self_approval_is_refused(self) -> None:
+        self.init("fix", "trivial")
+        self.ticket("ticket")
+        refused = run_full(
+            "ticket",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--id",
+            "T1",
+            "--gate",
+            "review",
+            "--status",
+            "passed",
+            "--reason",
+            "reviewing my own change",
+        )
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("decided by dev", json.loads(refused.stdout)["error"])
+
+        # QA did not build it, so QA may review and approve it.
+        self.ticket("review")
+        self.ticket("done")
+        trail = (self.root / "_bmad-output" / "sdlc" / ".memlog.md").read_text()
+        self.assertIn("T1 review=passed by qa", trail)
+        self.assertIn("T1 done=passed by qa", trail)
+
+    def test_phase_advance_by_foreign_role_needs_a_reason(self) -> None:
+        self.init("fix", "trivial")
+        self.ticket("ticket")
+        self.ticket("tests", "skipped")
+        self.ticket("review")
+        self.ticket("done")
+        refused = run_full(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "phases.build.status",
+            "--value",
+            "done",
+            "--as",
+            "qa",
+        )
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("belongs to dev", json.loads(refused.stdout)["error"])
+
+        allowed = run_full(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "phases.build.status",
+            "--value",
+            "done",
+            "--as",
+            "qa",
+            "--reason",
+            "ticket closed by QA",
+        )
+        self.assertEqual(allowed.returncode, 0, allowed.stdout)
+        trail = (self.root / "_bmad-output" / "sdlc" / ".memlog.md").read_text()
+        self.assertIn("phases.build.status=done by qa", trail)
+
+    def test_unknown_role_override_is_rejected(self) -> None:
+        self.init("fix", "trivial")
+        run(
+            "role",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--role",
+            "qa",
+            "--reason",
+            "role fixture",
+        )
+        text = self.ledger.read_text(encoding="utf-8")
+        self.assertIn("role_override: qa", text)
+        self.ledger.write_text(
+            text.replace("role_override: qa", "role_override: bogus"),
+            encoding="utf-8",
+        )
+        validated = run_full("validate", "--plan", str(self.ledger))
+        self.assertNotEqual(validated.returncode, 0)
+        self.assertIn("role_override", json.loads(validated.stdout)["errors"][0])
+        summary = run_full("summary", "--plan", str(self.ledger))
+        self.assertNotEqual(summary.returncode, 0)
+        self.assertIn("unknown role", json.loads(summary.stdout)["error"])
+
+    def test_role_clear_and_paused_refusal(self) -> None:
+        self.init("fix", "trivial")
+        run(
+            "role",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--role",
+            "qa",
+            "--reason",
+            "role fixture",
+        )
+        self.assertEqual(self.summary()["role_source"], "override")
+
+        # A paused workstream refuses the write; resume first.
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "status",
+            "--value",
+            "paused",
+            "--reason",
+            "role fixture",
+        )
+        paused_clear = run_full(
+            "role",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--clear",
+        )
+        self.assertNotEqual(paused_clear.returncode, 0)
+        self.assertIn("paused", json.loads(paused_clear.stdout)["error"])
+
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "status",
+            "--value",
+            "active",
+            "--reason",
+            "role fixture",
+        )
+        run(
+            "role",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--role",
+            "qa",
+            "--reason",
+            "role fixture",
+        )
+        cleared = run(
+            "role",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--clear",
+            "--reason",
+            "handoff complete",
+        )
+        self.assertIsNone(cleared["role"])
+        self.assertEqual(cleared["role_source"], "phase")
+        trail = (self.root / "_bmad-output" / "sdlc" / ".memlog.md").read_text()
+        self.assertIn("role cleared (reason: handoff complete)", trail)
+
+    def test_init_model_change_on_an_existing_ledger(self) -> None:
+        self.init("fix", "trivial", model="v6")
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "status",
+            "--value",
+            "paused",
+            "--reason",
+            "role fixture",
+        )
+        paused = run_full(
+            "init",
+            "--project-root",
+            str(self.root),
+            "--name",
+            "Role Fixture",
+            "--track",
+            "fix",
+            "--size",
+            "trivial",
+            "--model",
+            "current",
+        )
+        self.assertNotEqual(paused.returncode, 0)
+        self.assertIn("reopen it before changing the model", json.loads(paused.stdout)["error"])
+
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "status",
+            "--value",
+            "active",
+            "--reason",
+            "role fixture",
+        )
+        changed = run(
+            "init",
+            "--project-root",
+            str(self.root),
+            "--name",
+            "Role Fixture",
+            "--track",
+            "fix",
+            "--size",
+            "trivial",
+            "--model",
+            "current",
+            "--reason",
+            "model upgraded",
+        )
+        self.assertTrue(changed["ok"], changed)
+        self.assertEqual(changed["model"], "current")
+        trail = (self.root / "_bmad-output" / "sdlc" / ".memlog.md").read_text()
+        self.assertIn("model", trail.lower())
+
+    def test_gate_nodes_record_the_deciding_actor(self) -> None:
+        self.init("fix", "trivial")
+        self.ticket("ticket")
+        self.ticket("review")
+        ledger = self.ledger.read_text(encoding="utf-8")
+        self.assertIn("actor: dev", ledger)
+        self.assertIn("actor: qa", ledger)
+
+    def test_validate_reports_self_approval(self) -> None:
+        self.init("fix", "trivial")
+        self.ticket("ticket")
+        self.ticket("review")
+        text = self.ledger.read_text(encoding="utf-8")
+        # Forge the review so the builder also decided it, as a hand edit could.
+        head, _, tail = text.rpartition("actor: qa")
+        self.ledger.write_text(head + "actor: dev" + tail, encoding="utf-8")
+        validated = run_full("validate", "--plan", str(self.ledger))
+        self.assertNotEqual(validated.returncode, 0)
+        errors = json.loads(validated.stdout)["errors"]
+        self.assertTrue(
+            any(
+                "another role must review and approve it" in error
+                for error in errors
+            ),
+            errors,
+        )
 
 
 if __name__ == "__main__":

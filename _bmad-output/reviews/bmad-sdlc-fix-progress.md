@@ -386,3 +386,77 @@ Highest-impact open items: `summary` drops the role fields on a paused or closed
 - `package.sh --check` is in sync; `quick_validate`, `prepass-workflow-integrity`, `scan-path-standards`, `scan-scripts`, and `prepass-prompt-metrics` are clean.
 - Focused role eval run `~/bmad-evals/bmad-sdlc-r11-roles/20261124-171044-r11-roles`: 3/3 cases executed, **24/24 expectations** graded pass beside each transcript (`role-explicit-qa`, `role-control-pm`, `role-qa-menu`).
 - The full quality + baseline re-run (finding 16) is still open; the earlier 12/12 run predates these fixes.
+
+## Round 12 review (2026-11-24) — closed
+
+Source: `2026-11-24-bmad-sdlc-r12.md` / `.findings.json` (48 findings: 15 adversarial, 9 edge-case, 9 verification-gap, 7 structure, 8 prose, after merging overlaps). Status: `[ ]` open, `[~]` in progress, `[x]` fixed, `[-]` deferred (reason).
+
+Scope: the whole skill at HEAD `685f750`, including the r11 fixes. This round also closes round 11's last open item: the full quality run was re-executed and every transcript graded.
+
+Verification state at review time: **14/14** quality cases executed and graded, **130/135** expectations pass (5 cases carry a failure: 3 path escapes, 1 abbreviated track list, 1 missing `memlog` key); the three role cases were executed for the first time; `package.sh --check` in sync. The role gates themselves held — a role-blind implementation would have failed `role-explicit-qa` and `role-control-pm`. The unit suite was not verified end-to-end on the live tree: a concurrent edit interrupted it. On a pristine copy of `685f750` the role suite passes 23/23 and the full run reached 128/128 with no failures before a 25-minute cap.
+
+Highest-impact open items: the headless block's field set is defined twice with opposite rules (R12-02); `blocked_by` is a gate list in one file and an action in another (R12-03); the per-ticket DEV→QA handoff has no transition row (R12-05); `verify-return` does not check role-vs-action ownership (R12-14); self-approval leaves no trace because the actor is never stored on the gate (R12-15); the isolation guardrail is contradicted by activation, and three eval runs escaped the root through `{skill-root}/..` to find the resolver.
+
+### Contract
+- [x] **R12-01** `summary` now emits `actions[]` (every action, every phase, with `role`/`role_free`/`role_allowed` and its `gate`); `SKILL.md` steps 8/10 and loop step 2, `menu.md` §Action menu, and `ledger-schema.md` §Summary shape all filter on it.
+- [x] **R12-02** One field set: `headless.md` §Emitted block owns the key list (keep the position keys, omit the three per-level lists, `tickets`, and `actions`); `SKILL.md` steps 10 and loop step 2, and `handoff-protocol.md` §Headless JSON point at it.
+- [x] **R12-03** `blocked_by` is an ordered array of action ids starting with `next_action.action`, stated once in `handoff-protocol.md` §Headless JSON and matched by `headless.md`, the example, and the eval rubric.
+- [x] **R12-04** `gate-matrix.md` §intro now says a gate id is not always an action id and points at `next_action.action`/`next_action.role`; `plan.requirements` → `frame.spec`/`plan.prd` is the worked case.
+- [x] **R12-05** `handoff-protocol.md` §Transition table splits DEV → QA into a per-ticket row (`build.ticket` decided, that ticket's `build.review` open or blocked, build still active) and the existing per-phase row.
+- [x] **R12-06** `menu.md` §Phase menu and `phase-map.md` §Build phase mark Build as a mixed phase: `⇄` means another role owns it, and QA enters to run the actions it owns (`build.review`, `build.done`).
+- [x] **R12-09** `roles.*.name`/`references` are gone from the config, its validator, and the docs; a role id names its overlay directory.
+- [x] **R12-10** The description and activation step 4 accept the ids in `role-config.toml`, with `pm|dev|qa` as the shipped defaults.
+- [x] **R12-12** `role --clear` now refuses on a paused workstream, matching "a paused workstream refuses writes".
+- [x] **R12-13** `build.auto`/`build.loop` show `—` in the Gate column with a note that each built ticket still needs its own `build.ticket` gate.
+
+### Ownership
+- [x] **R12-11** `validate` rejects a `role_override` that is not in `role-config.toml`, and `resolve_current_role` fails with JSON naming the valid roles instead of silently disabling every action.
+- [x] **R12-14** `verify-return` now requires the returned role to own the returned action (role-free actions exempt) and reports the ownership reason; the role test asserts a QA-labelled `build.ticket` is refused.
+- [x] **R12-15** Every gate decision stores `actor` on the node (from `--as` or the resolved role, never from a payload); `guard_self_approval` refuses a `build.review`/`build.done` by the role that decided `build.ticket`, including through a whole-ticket replacement.
+- [x] **R12-16** `phases.<p>.status` writes resolve the acting role, log it, and need `--reason` when the actor differs from the phase's owner.
+- [x] **R12-17** `workstreams_detail[]` now carries `role_source`, and each brief's `next_action` gets the same role annotations (unowned legacy actions degrade to `role: null`, `role_allowed: false`).
+- [x] **R12-18** `DEFAULT_ROLE_CONFIG` is deleted: a missing `references/role-config.toml` fails with JSON naming the path, and the equality test is replaced by a missing-config test.
+
+### Isolation and evals
+- [x] **R12-07** The isolation guardrail is scoped: no writes outside `{project-root}`, reads outside limited to named `{skill-root}` files, a missing resolver means reading `{skill-root}/customize.toml` in place, and `{skill-root}/..` is forbidden. Activation step 1 repeats the rule.
+- [x] **R12-08** The guardrail names the real files (`evals/cases.json`, `queries.json`, `adapter.json`, rubrics), bans opening their contents rather than seeing `evals/`, and every rubric line says the same.
+
+### Verification
+- [x] **R12-19** `_gate_owner` derives `--as` from the imported resolver (`role_for_action`), so the main suite exercises the real ownership table.
+- [x] **R12-20** Test: DEV writing `gates.verify.trace` is refused ("belongs to qa") and accepted with `--as qa`, with the audit line naming qa.
+- [x] **R12-21** Test: a phase blocked with every gate decided recommends `<phase>.unblock` with `role_free: true`, not `close.mark_done`.
+- [x] **R12-22** Test: every per-phase gate list is scoped to its own phase and `required_open` matches the phase's gate entries.
+- [x] **R12-23** Test: a return for `build.review` passed as `--expect-action build.ticket` is refused with the action-mismatch reason.
+- [x] **R12-24** Tests: `role --clear` (paused refusal, then clear with the audit line) and `init --model` on an existing ledger (paused refusal, then the reasoned change).
+- [x] **R12-25** Test: the packaged tree contains every file `SKILL.md` names, `role-config.toml`, `customize.toml`, the template, and the shipped tests, and no `evals/`.
+- [x] **R12-26** Rubrics gain: the headless key set, an audit-trail assertion for every case that writes, an `assumptions`-vs-detector check, and a derived-status check on the two role cases.
+- [x] **R12-27** Three cases added: `scope-capture`, `force-headless`, `consent-before-commit`.
+- [x] **R12-28** The duplicated `"unknown role"` key is split into `phase_roles`/`track_roles` labels; unknown-track cases were added.
+
+### Smaller and editorial
+- [x] **R12-29** A phase-evidence append must name an existing non-empty file inside the root; reconcile's dangling-pointer handling is tested by deleting the file after the write.
+- [x] **R12-30** The unreachable `elif` after the root-inference failure is deleted; the evidence scan is unconditional past the check.
+- [x] **R12-31** `[track_roles]` rejects a key that is not a track, with tests.
+- [x] **R12-32** The next-action reason maps `blocked`, `skipped without a reason`, `overridden without a reason`, else `open`.
+- [x] **R12-33** `summary --project-root` fails when the directory does not exist instead of reporting every skill missing.
+- [x] **R12-34** `handoff-protocol.md` is reordered: one Contents, no divider, §Role transitions and §Headless JSON in the main flow, every heading indexed.
+- [x] **R12-35** The handoff contract exists once in `handoff-protocol.md`; `SKILL.md` loop step 4 is a pointer plus the role check.
+- [x] **R12-36** `headless.md` owns the block's field set; `handoff-protocol.md` §Headless JSON owns only the role-mismatch fields and shows that subset, so neither file is incomplete alone.
+- [x] **R12-37** The seven overlay restatements are collapsed to pointers at the one transition table.
+- [x] **R12-38** `SKILL.md` §References splits the activation set from step-triggered files, moves script arguments into their own table, and adds `customize.toml`.
+- [x] **R12-39** The role-mismatch handler is folded into loop step 4, before the handoff and the ledger write.
+- [x] **R12-40** Precedence is its own section after §Resolution rules; `<phase>.unblock` and its clearing recipe moved to `ledger-schema.md` §A blocked phase.
+- [x] **R12-41** The gate table column is `Level`; the track/size detail stays in the prose.
+- [x] **R12-42** "Plan" no longer names the ledger: SKILL.md overview, activation step 6, guardrail, `ledger-schema.md`, the template, and `customize.toml` say "ledger".
+- [x] **R12-43** "Overlay" is reserved for the role files; the ledger "records SDLC state only".
+- [x] **R12-44** The brief rule reads "`<resolved ledger path>` or `<resolved audit trail (memlog) path>`".
+- [x] **R12-45** Role resolution says "track rule" and "longest matching action-id prefix"; "override" is left to the reasoned gate or role exception.
+- [x] **R12-46** The return template uses `<done|blocked|needs_input>` and `<pm|dev|qa>` and says to fill every `<...>`.
+- [x] **R12-47** The role-free set is stated once (`advisory.*`, `close.mark_done`, `<phase>.unblock`), and the prohibition is "no single role performs all three on the same ticket".
+- [x] **R12-48** The hand-edit fallback is a bullet list; the emitted-block rule is one sentence per obligation.
+
+### Verification after the fixes
+
+- **290/290** unittest cases pass (`uv run --no-cache python -m unittest discover -s .agents/skills/bmad-sdlc/scripts/tests -p 'test_*.py'`, 290 tests in 962 s). The suite grew from 276 by 14 role cases (action catalog, blocked-phase unblock, per-phase scoping, workstream-detail roles, self-approval runtime and `validate` proof, foreign phase advance, unknown `role_override`, `role --clear`, init model change, actor recording, phase-gate foreign actor, mismatched `--expect-action`, missing role config, unknown track keys) and the package-content case.
+- `package.sh --check` is in sync after repackaging.
+- The eval suite is updated but **not re-graded in this pass**: three cases were added and every headless/role rubric gained the key-set, memlog, assumptions, and derived-status assertions. Grading is a review-time activity (`evals/README.md` §Grading); running 17 cases without reading each transcript would produce a score that is not evidence, which the README explicitly warns against. The next review round should execute and grade it.

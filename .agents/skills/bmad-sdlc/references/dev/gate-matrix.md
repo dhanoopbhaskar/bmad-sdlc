@@ -13,4 +13,4 @@ When `build.ticket` is blocked, DEV reports the missing build plan or acceptance
 
 ## Handoff
 
-See `handoff-protocol.md` §Role Transitions and §Blocked Gate Handling. No session context is passed; the next role reads only the ledger and artifact files.
+`handoff-protocol.md` §Role transitions is the only transition table, and §Blocked gate handling owns the blocker wording. No session context is passed; the next role reads only the ledger and artifact files.

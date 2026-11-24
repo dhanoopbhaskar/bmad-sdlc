@@ -20,7 +20,7 @@ activation_steps_append = []
 # Each entry is a literal sentence, a `skill:` name, or a `file:` path/glob.
 persistent_facts = []
 
-# Durable plan. Committed to git so it survives sessions and machines.
+# Durable ledger. Committed to git so it survives sessions and machines.
 ledger_path = "{project-root}/_bmad-output/sdlc/plan.yaml"
 
 # Append-only audit trail. Passed to init/log as --memlog.

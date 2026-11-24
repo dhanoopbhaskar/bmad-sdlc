@@ -2,7 +2,7 @@
 
 The ledger is the conductor's durable memory. It lives at `{workflow.ledger_path}` (default `{project-root}/_bmad-output/sdlc/plan.yaml`) and is committed to git. The append-only audit trail is `{workflow.memlog_path}` (default `{project-root}/_bmad-output/sdlc/.memlog.md`). Both paths are customizable. Pass `--plan` to every command that reads or writes the ledger; `detect` takes only `--project-root`. `init` records the audit path in `bmad.memlog`, and `--memlog` overrides it.
 
-**Ownership:** BMAD artifacts are the source of truth for ticket/story status. The ledger stores only the SDLC overlay: position, gate outcomes, decisions, and pointers. Never copy ticket statuses into the ledger; read them from `sprint-status.yaml` (v6) or `tickets.toml` / build plans (current).
+**Ownership:** BMAD artifacts are the source of truth for ticket/story status. The ledger records SDLC state only: position, gate outcomes, decisions, and pointers. Never copy ticket statuses into the ledger; read them from `sprint-status.yaml` (v6) or `tickets.toml` / build plans (current).
 
 An audit workstream has one synthetic ticket, `audit`. Its `review` gate is required; `ticket`, `tests`, and `done` are `skipped` because an audit reviews existing work rather than building a ticket.
 
@@ -152,14 +152,15 @@ workstreams:
 | `project` | Non-empty string. Defaults to the repo/folder name. |
 | `bmad.model` | `v6`, `current`, or `unknown`. Recorded by `init` from detection; changed with `set`. Do not guess after detection. |
 | `artifacts.*` | Absolute path, `{project-root}`-relative path, or null. Pointers, not content. |
-| `phases.*.status` | One of `pending`, `active`, `done`, `skipped`, `blocked`. Only one phase is `active` at a time. A `done`/`skipped` status is a cache — see `gate-matrix.md` §Phase completion. Reopening needs `--reason`. |
+| `phases.*.status` | One of `pending`, `active`, `done`, `skipped`, `blocked`. Only one phase is `active` at a time. A `done`/`skipped` status is a cache — see `gate-matrix.md` §Phase completion. Reopening needs `--reason`, and advancing by a role other than the phase's owner needs one too. |
 | `phases.*.note` | Free text. When a phase with a required gate is skipped, its reason goes here. |
 | `workstreams.<id>.track` | `greenfield`, `feature`, `fix`, or `audit`. Change with `resize`; `set` rejects it. |
 | `workstreams.<id>.size` | `trivial`, `one-session`, `epic`, or `project`. Change with `resize`; `set` rejects it. |
 | `workstreams.<id>.status` | `active`, `paused`, or `done`. Resume with `set --workstream <id> --path status --value active` (with `--reason` when reopening a done workstream); close with `done`, never `set`. |
 | `workstreams.<id>.current_phase` | Derived position, refreshed by mutating commands. `summary` reports it unchanged; the recommended `summary.phase` may be a later phase. |
-| `workstreams.<id>.role_override` | Optional persisted role (`pm`, `dev`, or `qa`). Written by the `role` verb with a logged reason; wins over track and phase detection. Cleared by `resume`, `resize`, and `done`. |
+| `workstreams.<id>.role_override` | Optional persisted role, one of the ids in `role-config.toml` (`pm`, `dev`, `qa` shipped). Written by the `role` verb with a logged reason; wins over track and phase detection. Cleared by `resume`, `resize`, and `done`; `role --clear` refuses on a paused workstream. |
 | `gates.<phase>.<name>.status` | One of `open`, `passed`, `overridden`, `skipped`, `blocked`. `blocked` means the evidence pointer is missing; it is not a pass. |
+| `gates.<phase>.<name>.actor` | The role that decided the gate (`ticket.<gate>.actor` for a per-ticket gate). Written by the command from `--as` or the resolved `current_role`; never supplied in a payload. `validate` and a later reviewer read it to check that the builder did not also review or approve. |
 | `gates.<phase>.<name>.level` | `required`, `conditional`, or `optional`. **Derived** from track/size/model; the stored value is a cache — `summary` wins (`SKILL.md` §References). `validate` reports drift; `resize` or `migrate` rewrites it. |
 | `tickets.<id>.gates.<gate>.status` | One of `open`, `passed`, `overridden`, `skipped`, `blocked`. Gates are `ticket`, `tests`, `review`, `done`. |
 | `tickets.<id>.gates.<gate>.evidence` | Optional pointer to the artifact that decided a ticket gate (relative or absolute, inside the project root). `ticket --evidence <path>` writes it; the `done` command resolves it and requires one for an overridden gate. |
@@ -178,7 +179,8 @@ Every operation prints JSON. Mutating operations are atomic and take a file lock
 | `summary` field | Meaning |
 |---|---|
 | `phase`, `next_phase` | The recommended phase; equals `next_action.phase` when there is one. |
-| `next_action` | `{phase, gate, action, skill, skill_installed?, skill_manifest_only?, ticket?, role, role_free?, role_allowed, reason, source}` or null when paused/done. `role` is the action's owner from `role-config.toml`; `role_free` is true for `close.mark_done`, `<phase>.unblock`, and `advisory.*`, where `role` is null and every role may act. `role_allowed` is false when an owned action's role differs from `current_role`. `skill_installed` appears only when `summary` is given `--project-root`. When the first-choice skill is absent, `skill` is rewritten to the first installed alternative and `skill_installed` reports whether that one is installed. `skill_manifest_only` is true when the manifest names the chosen skill but no readable `SKILL.md` exists under a skill directory — warn and offer a repair, since the handoff may fail. |
+| `next_action` | The next action, or null when paused/done. Fields and the role annotations are described under §Next action. |
+| `actions` | `[{phase, action, gate, ticket, role, role_free?, role_allowed}]` for every action of every phase, the gateless `frame.*`, `build.atdd`, `build.auto`, `build.loop`, `verify.e2e`, `verify.automate`, and `close.correct_course` included. `gate` is the gate id the action satisfies, or null when it has none. The menu filters on this list; `next_action` and `optional_actions` cover only what is next or optional.
 | `current_role`, `role_source` | The active role and why it was chosen: `explicit` (`--role`), `override` (the persisted `role` verb), `track`, `phase`, or `default`. Both are present even when no workstream is active (paused or closed), resolved from the last workstream's stored phase. |
 | `optional_actions` | Open optional actions the user may take now; each carries `role`, `role_free?`, and `role_allowed`. |
 | `open_gates`, `blocked_gates` | Every live open/blocked gate, per-ticket gates included. A phase marked `done`/`skipped` contributes only the gates that contradict its status; `phases[].open_gates` lists every open gate in that phase, whether or not the phase is `done`/`skipped`. |
@@ -188,13 +190,26 @@ Every operation prints JSON. Mutating operations are atomic and take a file lock
 | `locked_phases` | Phases not yet reachable, with the first missing gate. |
 | `phases[].complete` | True when `gate-matrix.md` §Phase completion says the phase is complete. |
 | `tickets` | Per-ticket gate state (`count`, `open`, `blocked`, `required_open`, `conditional_open`, `items`). |
-| `workstreams_detail` | `{id, name, track, size, status, current_phase, role, role_override, next_action}` for every workstream. |
+| `workstreams_detail` | `{id, name, track, size, status, current_phase, role, role_source, role_override, next_action}` for every workstream. `next_action` carries the same `role`/`role_free`/`role_allowed` annotations as the top-level one, resolved for that workstream, so the dashboard can tell a foreign next action from a takeable one. |
 | `ok` | True on success; a failed command exits non-zero with `ok: false` and `error`. |
 | `ledger`, `memlog` | Resolved ledger and audit-trail paths. |
 | `project`, `model` | Project name and recorded BMAD model. |
 | `workstream`, `workstreams`, `active_workstream` | The active workstream record, the id list, and the active id (all null when none is open). |
 | `decisions` | The active workstream's append-only decision list. |
 | `cached_next_action`, `next_action_stale` | The ledger's stored `next` block, and whether it disagrees with the recomputed `next_action`. |
+
+#### Next action
+
+`next_action` is `{phase, gate, action, skill, skill_installed?, skill_manifest_only?, ticket?, role, role_free?, role_allowed, reason, source}`, or null when the workstream is paused or done.
+
+- `role` is the action's owner from `role-config.toml`. `role_free` is true for `close.mark_done`, `<phase>.unblock`, and `advisory.*`; those carry `role: null` and every role may act.
+- `role_allowed` is false when an owned action's role differs from `current_role`.
+- `skill_installed` appears only with `--project-root`. When the first-choice skill is absent, `skill` is rewritten to the first installed alternative and `skill_installed` reports whether that one is installed.
+- `skill_manifest_only` is true when the manifest names the chosen skill but no readable `SKILL.md` exists under a skill directory. Warn and offer a repair, since the handoff may fail.
+
+#### A blocked phase
+
+A phase whose own status is `blocked`, with no gate left to decide, has `next_action` `{action: "<phase>.unblock", gate: null, role: null, role_free: true, role_allowed: true}`. Resolve the blocker, then clear the phase: `set --workstream <id> --path phases.<phase>.status --value active --reason <why>`. Finish or block any other active phase first; only one phase may be active.
 
 ### Commands
 
@@ -259,7 +274,14 @@ Every operation prints JSON. Mutating operations are atomic and take a file lock
 
 ### Hand-edit fallback
 
-If `uv` is unavailable, read and write the YAML directly with the same shape, keep the writes atomic, and take a sibling `.lock` file around the read-modify-write. Apply §Field rules by hand: an override or reasoned skip carries `override_reason`, a decided gate carries `decided_at`, `decisions` stays append-only, and a level is derived from the resolved track/size/model, never hand-written. Log the hand edit to the audit trail, re-read the file, and present no gate from an unvalidated ledger. Never hand-write a derived field (`phases.*.gate`, `gates.*.level`) or a BMAD ticket status. The script is a convenience, not a hard dependency; these rules are the dependency.
+If `uv` is unavailable, read and write the YAML directly with the same shape. Keep the writes atomic and take a sibling `.lock` file around the read-modify-write. Apply §Field rules by hand:
+
+- An override or reasoned skip carries `override_reason`; a decided gate carries `decided_at` and `actor`.
+- `decisions` stays append-only.
+- A level is derived from the resolved track/size/model, never hand-written.
+- Never hand-write a derived field (`phases.*.gate`, `gates.*.level`) or a BMAD ticket status.
+
+Log the hand edit to the audit trail, re-read the file, and present no gate from an unvalidated ledger. The script is a convenience, not a hard dependency; these rules are the dependency.
 
 ## Resume semantics
 

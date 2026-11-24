@@ -22,4 +22,4 @@ Expected output, evidence, and override effects: base `gate-matrix.md` §Gate ta
 
 ## Handoff
 
-`handoff-protocol.md` §Role Transitions is the only transition table. DEV hands off to QA when every ticket's `build.done` is decided and `phases.build` is `done`; it hands back to PM when `plan.requirements` is blocked. Rollback uses the `ticket` command for per-ticket gates; DEV never writes a foreign gate without a recorded reason.
+`handoff-protocol.md` §Role transitions is the only transition table; DEV hands off when `next_action.role_allowed` is false. Never write a foreign gate without a recorded reason (`gate-matrix.md` §Override rules).

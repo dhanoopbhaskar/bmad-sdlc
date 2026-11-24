@@ -9,4 +9,4 @@ Role delta for the Product Manager. Every gate level, evidence rule, and overrid
 
 ## Handoff
 
-`handoff-protocol.md` §Role Transitions is the only transition table. PM does not hand off on a passed gate: it hands off when `next_action.role_allowed` is false after the phase is marked `done`.
+`handoff-protocol.md` §Role transitions is the only transition table. PM hands off when `next_action.role_allowed` is false after the phase is marked `done`.

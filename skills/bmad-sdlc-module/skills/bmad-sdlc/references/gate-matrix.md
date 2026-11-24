@@ -12,11 +12,11 @@ This is the reference for gate levels, evidence, pass criteria, and override eff
 
 A gate is a checkpoint between the conductor and the human. The ledger records the outcome; the evidence lives in the BMAD artifacts. The conductor never advances a required gate on file presence alone: it reads the artifact and checks the pass criteria.
 
-Ownership is separate from criteria: `role-config.toml` names the role that owns each gate, and the gate id doubles as the action id (`build.review` → QA, `verify.trace` → QA, `plan.requirements` → PM). Every gate write records the acting role; `--as <role>` overrides the resolved `current_role`. A role that does not own the gate needs `--reason`, and the audit line names the actor. The same role must not build, review, and approve its own ticket.
+Ownership is separate from criteria: `role-config.toml` names the role that owns each action, and a gate id often doubles as an action id (`build.review` → QA, `verify.trace` → QA). It does not always: `plan.requirements` is satisfied by `frame.spec` (or `plan.prd` at project size), and a per-ticket gate is `build.<ticket>.review`. Read `next_action.action` and `next_action.role` rather than deriving either from a gate id. Every gate write records the acting role on the node (`actor`) and in the audit line; `--as <role>` overrides the resolved `current_role`. A role that does not own the gate needs `--reason`. The role that decided `build.ticket` cannot decide that ticket's `build.review` or `build.done`: no single role builds, reviews, and approves the same ticket.
 
 ## Gate table
 
-| Gate id | Level by track and size | Condition | Evidence | Pass criteria |
+| Gate id | Level | Condition | Evidence | Pass criteria |
 |---|---|---|---|---|
 | `plan.requirements` | required for `epic`/`project`; conditional for `one-session`; optional for `trivial` and any `fix` | `epic`/`project`; `one-session` when the intent is not already well-defined; not required for `trivial` or a `fix` with a clear ticket | `SPEC.md` or a PRD | The artifact states why, what, constraints, non-goals, and a success signal; open questions are listed. |
 | `plan.stories` | required for non-`fix` `epic`/`project`; conditional for a non-`fix` `one-session` and a `fix` `epic`/`project`; optional for `trivial` and a `fix` `one-session` | `epic`/`project`; a single ticket satisfies it for `fix`/`one-session` | v6: epics + stories. Current: `tickets.toml` | Stories/tickets are ordered, each has a deliverable and a verification, and dependencies are named. |
@@ -36,9 +36,11 @@ Ownership is separate from criteria: `role-config.toml` names the role that owns
 | `close.retro` | optional (recommended per epic) | Epic finished | Retro document + verdict | Findings cite evidence; action items have owners; verdict is accept/reject. |
 | `close.walkthrough` | optional | A human should review the change | Walkthrough | The user has seen purpose, hot spots, and how to test. |
 
-The `Condition` column guides the human deciding whether a gate applies; the conductor cannot evaluate it. The `Level` column is the resolved answer for the current track, size, and model; the stored level is a cache and `summary` wins if it disagrees.
+The `Condition` column guides the human deciding whether a gate applies; the conductor cannot evaluate it. The `Level` column is the resolved requirement for the current track, size, and model; the stored level is a cache and `summary` wins if it disagrees.
 
-`build.ticket`, `build.tests`, `build.review`, and `build.done` are per-ticket. Record them under `tickets.<id>.gates` with the `ticket` command; each gate node may carry an `evidence` pointer, and the `done` command resolves it. The ledger stores gate outcomes, not ticket status.
+`build.ticket`, `build.tests`, `build.review`, and `build.done` are per-ticket. Record them under `tickets.<id>.gates` with the `ticket` command; each gate node may carry an `evidence` pointer and an `actor` (the role that decided it), and the `done` command resolves the pointer. The ledger stores gate outcomes, not ticket status.
+
+Marking a phase `done` or `skipped` by a role other than the phase's owner needs `--reason`, and the audit line names the actor: a phase advance is what hands the workstream to the next role.
 
 An `audit` has no build tickets: its required code review is the `review` gate on the synthetic `audit` ticket. For an `audit`, every `plan.*` gate resolves to `optional`, `verify.trace` is required regardless of size, and `verify.nfr` / `verify.test_review` are conditional.
 

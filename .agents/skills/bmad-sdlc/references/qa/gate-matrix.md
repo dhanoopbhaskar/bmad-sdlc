@@ -12,4 +12,4 @@ Role delta for the Quality role. Every gate level, evidence rule, and override e
 
 When `verify.trace` is blocked, QA names the missing matrix or evidence and stops. The conductor records the blocked gate and the pointer; the handed-off role never writes the ledger.
 
-Rollback keeps the shape in `handoff-protocol.md` §Headless JSON: `status: blocked`, `current_role`, an ordered `blocked_by` array, `pointer`, and the retained `next_action`. Do not add a second blocked shape here. Handoff rules: `handoff-protocol.md` §Role Transitions.
+The blocked-handoff shape and the rollback rule live in `handoff-protocol.md` §Headless JSON and §Handoff rules. Do not restate or extend them here.

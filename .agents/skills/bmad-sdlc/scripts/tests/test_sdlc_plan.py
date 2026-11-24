@@ -9,6 +9,7 @@ Run:
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import re
 import shutil
@@ -20,45 +21,50 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parents[1] / "sdlc_plan.py"
 REPO_ROOT = Path(__file__).resolve().parents[5]
 
-_TICKET_GATE_ROLES = {
-    "ticket": "dev",
-    "tests": "dev",
-    "review": "qa",
-    "done": "qa",
-}
+
+def load_module():
+    """Import the helper so the suite resolves ownership, never a copy."""
+    spec = importlib.util.spec_from_file_location("sdlc_plan_suite", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+SDLC = load_module()
 
 
 def _gate_owner(args: tuple[str, ...]) -> str | None:
     """The role that owns the gate a test command writes.
 
     The suite sets many gates directly; the actor guard added in round 11 would
-    otherwise need `--reason` on every one. This infers the owning role so the
-    existing tests keep exercising the write they name. The role suite asserts
-    the guard itself.
+    otherwise need `--reason` on every one. This derives the owner from the
+    imported resolver — the same table `summary` uses — so a regression in
+    ownership resolution fails here too, not just in the role suite.
     """
     parts = list(args)
     if not parts:
         return None
+    action = None
     if parts[0] == "ticket" and "--gate" in parts:
         try:
-            return _TICKET_GATE_ROLES.get(parts[parts.index("--gate") + 1])
+            action = f"build.{parts[parts.index('--gate') + 1]}"
         except IndexError:
             return None
-    if parts[0] != "set" or "--path" not in parts:
+    elif parts[0] == "set" and "--path" in parts:
+        try:
+            path = parts[parts.index("--path") + 1]
+        except IndexError:
+            return None
+        phase_gate = re.match(r"gates\.(\w+)\.(\w+)(?:\.|$)", path)
+        ticket_gate = re.match(r"tickets\..+?\.gates\.(\w+)(?:\.|$)", path)
+        if phase_gate:
+            action = f"{phase_gate.group(1)}.{phase_gate.group(2)}"
+        elif ticket_gate:
+            action = f"build.{ticket_gate.group(1)}"
+    if not action or SDLC.role_is_free(action):
         return None
-    try:
-        path = parts[parts.index("--path") + 1]
-    except IndexError:
-        return None
-    phase_gate = re.match(r"gates\.(plan|solution|verify|close)\.", path)
-    if phase_gate:
-        return "pm" if phase_gate.group(1) == "plan" else "qa"
-    ticket_gate = re.match(
-        r"tickets\..+?\.gates\.(ticket|tests|review|done)\.", path
-    )
-    if ticket_gate:
-        return _TICKET_GATE_ROLES.get(ticket_gate.group(1))
-    return None
+    return SDLC.role_for_action(action, None)
 
 
 def run_full(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -239,6 +245,7 @@ class LedgerTests(unittest.TestCase):
 
     def test_append_evidence_and_log(self) -> None:
         self.init()
+        (self.tmp / "spec.md").write_text("# spec\n", encoding="utf-8")
         run(
             "append",
             "--plan",
@@ -1382,6 +1389,9 @@ class LedgerTests(unittest.TestCase):
 
     def test_reconcile_reports_missing_evidence_and_applies_orphans(self) -> None:
         self.init()
+        missing = self.tmp / "docs" / "missing.md"
+        missing.parent.mkdir(parents=True, exist_ok=True)
+        missing.write_text("# evidence\n", encoding="utf-8")
         run(
             "append",
             "--plan",
@@ -1393,6 +1403,9 @@ class LedgerTests(unittest.TestCase):
             "--value",
             "docs/missing.md",
         )
+        # The pointer is accepted only while the file exists; deleting it after
+        # the write is what a later session sees.
+        missing.unlink()
         prd = self.tmp / "_bmad-output" / "planning-artifacts" / "prd" / "prd.md"
         prd.parent.mkdir(parents=True, exist_ok=True)
         prd.write_text("# PRD\n", encoding="utf-8")
@@ -3091,6 +3104,25 @@ class LedgerTests(unittest.TestCase):
         self.assertFalse(refused["ok"])
         self.assertIn("non-empty", refused["error"])
 
+    def test_append_rejects_a_pointer_to_a_missing_file(self) -> None:
+        """An append-only pointer to a typo would block reconcile forever."""
+        self.init()
+        refused = run(
+            "append",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "phases.plan.evidence",
+            "--value",
+            "docs/typo.md",
+        )
+        self.assertFalse(refused["ok"])
+        self.assertIn("existing non-empty file", refused["error"])
+        summary = run("summary", "--plan", str(self.ledger))
+        self.assertEqual(summary["phases"][0]["evidence"], [])
+
     def test_resize_refuses_a_done_workstream(self) -> None:
         self.init()
         self.edit_ledger("data['workstreams']['ws-001']['status'] = 'done'")
@@ -4021,6 +4053,39 @@ class LedgerTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_packaged_skill_contains_every_runtime_file(self) -> None:
+        """Sync is not enough: the packaged tree must carry what SKILL.md names."""
+        packaged = (
+            REPO_ROOT / "skills" / "bmad-sdlc-module" / "skills" / "bmad-sdlc"
+        )
+        if not packaged.is_dir():
+            self.skipTest("packaging is authoring-repo-only")
+        required = [
+            "SKILL.md",
+            "VERSION",
+            "customize.toml",
+            "assets/plan-template.yaml",
+            "references/role-config.toml",
+            "references/phase-map.md",
+            "references/gate-matrix.md",
+            "references/ledger-schema.md",
+            "references/version-adapters.md",
+            "references/handoff-protocol.md",
+            "references/menu.md",
+            "references/headless.md",
+        ]
+        for role in ("pm", "dev", "qa"):
+            required.append(f"references/{role}/phase-map.md")
+            required.append(f"references/{role}/gate-matrix.md")
+        required.append("references/qa/solution-phase.md")
+        for relative in required:
+            self.assertTrue(
+                (packaged / relative).is_file(), f"missing {relative}"
+            )
+        self.assertTrue(list((packaged / "scripts").glob("sdlc_plan.py")))
+        self.assertTrue(list((packaged / "scripts" / "tests").glob("test_*.py")))
+        self.assertFalse((packaged / "evals").exists())
+
 
     # --- round-5 regressions -------------------------------------------------
 
@@ -4477,6 +4542,7 @@ class LedgerTests(unittest.TestCase):
                 "status",
                 "current_phase",
                 "role",
+                "role_source",
                 "role_override",
                 "next_action",
             },
@@ -5859,6 +5925,7 @@ class RegressionTests(unittest.TestCase):
             "set", "--plan", str(self.ledger), "--workstream", "ws-001",
             "--path", "tickets.1", "--replace",
             "--value", json.dumps(replacement), "--reason", "replace",
+            "--as", "qa",
         )
         self.assertNotEqual(node.returncode, 0)
         self.assertIn("passed build.review", json.loads(node.stdout)["error"])
@@ -6340,10 +6407,15 @@ class RegressionTests(unittest.TestCase):
 
     def test_reconcile_applies_a_phase_block(self) -> None:
         self.init(track="fix", size="trivial")
+        missing = self.tmp / "verify-notes.md"
+        missing.write_text("# notes\n", encoding="utf-8")
         run(
             "append", "--plan", str(self.ledger), "--path",
-            "phases.verify.evidence", "--value", "missing.md",
+            "phases.verify.evidence", "--value", "verify-notes.md",
         )
+        # The pointer is valid when written; deleting the file is what a later
+        # session sees when the artifact was never produced.
+        missing.unlink()
         payload = run(
             "reconcile", "--plan", str(self.ledger), "--project-root",
             str(self.tmp), "--write",

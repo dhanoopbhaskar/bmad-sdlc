@@ -44,7 +44,4 @@ Do not skip silently.
 
 ## Handoff to Build
 
-After Solution phase gates are decided and `phases.solution` is `done` or `skipped`, follow `handoff-protocol.md` §Role Transitions (QA → DEV):
-- DEV reads test design for ATDD (`build.atdd`)
-- DEV runs tests per ticket (`build.tests`)
-- DEV reads the ledger + artifact files — no session context
+`handoff-protocol.md` §Role transitions owns the QA → DEV transition; it fires when `phases.solution` is marked `done` or `skipped`. DEV then reads the test design for ATDD (`build.atdd`), runs tests per ticket (`build.tests`), and reads only the ledger plus artifact files.

@@ -2,8 +2,12 @@
 #
 # This file is the single source of truth for role ownership. The ledger helper
 # (`scripts/sdlc_plan.py`) reads it to report `current_role`, `next_action.role`
-# and `next_action.role_allowed` from `summary`. Do not duplicate the mapping in
-# prose; point at this file instead.
+# and `next_action.role_allowed` from `summary`. It is required: a missing or
+# malformed file fails the command instead of falling back to a built-in copy.
+# Do not duplicate the mapping in prose; point at this file instead.
+#
+# A role's id names its overlay directory: role `qa` loads
+# `references/qa/phase-map.md` and `references/qa/gate-matrix.md`.
 #
 # Ownership resolution for an action id, in order:
 #   1. [track_action_overrides] key "<track>.<action>"
@@ -15,21 +19,15 @@
 # every role and need no owner here.
 
 [roles.pm]
-name = "Product Manager"
 action_prefixes = ["frame.", "plan."]
-references = ["references/pm/"]
 
 [roles.dev]
-name = "Developer"
 action_prefixes = ["build."]
-references = ["references/dev/"]
 
 # QA owns the review and done transitions as well as the solution, verify, and
 # close phases: the same role must not build, review, and approve its own work.
 [roles.qa]
-name = "Quality"
 action_prefixes = ["build.review", "build.done", "solution.", "verify.", "close."]
-references = ["references/qa/"]
 
 # Phase-to-role mapping for auto-detection.
 [phase_roles]

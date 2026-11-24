@@ -58,11 +58,11 @@ Choose a phase:
   q. Quit
 ```
 
-Mark the current phase with `→`. Mark locked phases with `·` and the missing required gate. Mark a phase whose `phases[].role` is not `current_role` with `⇄`; selecting it offers a handoff or the `role` verb, and never runs a foreign action.
+Mark the current phase with `→`. Mark locked phases with `·` and the missing required gate. Mark a phase whose `phases[].role` is not `current_role` with `⇄`. `⇄` means another role owns the phase by default; it is not a lock. Selecting it offers a handoff or the `role` verb, and when the phase also holds actions `current_role` owns (Build holds QA's `build.review` and `build.done`), list those actions and run them as `current_role`. Never run an action owned by another role.
 
 ## Action menu
 
-After a phase is chosen, show its actions. List every action whose `role` equals `current_role`, plus every `role_free` action (`advisory.*`, `close.mark_done`, `<phase>.unblock`). Show the role, skill, and gate state. The headless block is where the full summary lists stay verbatim.
+After a phase is chosen, show its actions. List every entry in `summary.actions[]` whose `phase` matches, whose `role` equals `current_role`, plus every `role_free` action (`advisory.*`, `close.mark_done`, `<phase>.unblock`). `summary.actions[]` is the filter: it carries a `role` for every action, including the gateless ones (`frame.*`, `build.atdd`, `verify.e2e`, `close.correct_course`) that `next_action` never names. Show the role, skill, and gate state. Headless mode replaces this menu with the block in `headless.md` §Emitted block.
 
 ```text
 Plan — choose an action (PM):
@@ -109,7 +109,7 @@ If the user types a skill name directly (e.g., `bmad-prd`), treat it as `run pla
 
 ## Status view
 
-`status` shows the dashboard rows, then per workstream: `current_role` with `role_source` (and any `role_override`), artifact paths, every gate with its level, status, and `decided_at`, ticket gate state, decisions, and overrides with reasons. Show `blocked` gates with the missing path, and show `reconcile`'s `missing_evidence`, `phases_to_block`, and `ambiguous_pointers` (several files match one artifact key). A `<phase>.unblock` next action means that phase is blocked with no gate left to show: resolve the blocker, then clear the phase with `set --workstream <id> --path phases.<phase>.status --value active --reason <why>`. Finish or block any other active phase first; only one phase may be active. Read ticket status from `sprint-status.yaml` or `tickets.toml` every time. If the read fails, say so and show the last known state; do not invent.
+`status` shows the dashboard rows, then per workstream: `current_role` with `role_source` (and any `role_override`), artifact paths, every gate with its level, status, and `decided_at`, ticket gate state, decisions, and overrides with reasons. Show `blocked` gates with the missing path, and show `reconcile`'s `missing_evidence`, `phases_to_block`, and `ambiguous_pointers` (several files match one artifact key). A `<phase>.unblock` next action means the phase is blocked with no gate left to show; the clearing procedure is in `ledger-schema.md` §Summary shape. Read ticket status from `sprint-status.yaml` or `tickets.toml` every time. If the read fails, say so and show the last known state; do not invent.
 
 ## After an action
 

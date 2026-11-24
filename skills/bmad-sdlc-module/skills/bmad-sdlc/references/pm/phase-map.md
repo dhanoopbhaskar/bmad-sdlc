@@ -18,4 +18,4 @@ Gate levels and override effects: base `gate-matrix.md` §Gate table and §Overr
 
 ## Handoff
 
-Follow `handoff-protocol.md` §Role Transitions. PM hands off when the next action is no longer PM's: to QA at plan → solution, or to DEV at plan → build when solution is skipped or optional for the track and size. A phase boundary fires when `phases.plan` is marked `done`, not when the last gate is merely passed.
+`handoff-protocol.md` §Role transitions is the only transition table; PM hands off when `next_action.role_allowed` is false after the phase is marked done.

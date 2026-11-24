@@ -17,4 +17,4 @@ Gate levels, evidence, and override effects: base `gate-matrix.md` §Gate table 
 
 ## Handoff
 
-`handoff-protocol.md` §Role Transitions is the only transition table, and §Headless JSON is the only blocked-handoff shape. QA hands to DEV when solution completes or when `verify.trace`/`verify.nfr` finds gaps that need code changes, and to PM when `close.correct_course` starts a replan. Within QA the phase advances `solution → verify → close` without a handoff.
+`handoff-protocol.md` §Role transitions is the only transition table, and §Headless JSON holds the role-mismatch fields. QA hands off when `next_action.role_allowed` is false; within QA a phase advances without one.

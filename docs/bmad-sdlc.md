@@ -1,6 +1,6 @@
 # bmad-sdlc — Design and Build Plan
 
-**Status:** built. Design agreed 2026-11-12; D26 added 2026-11-16; D27 and D28 added 2026-11-24.
+**Status:** built. Design agreed 2026-11-12; D26 added 2026-11-16; D27–D29 added 2026-11-24.
 **Created:** 2026-11-12
 **Purpose:** a single front-door skill that conducts the whole BMAD SDLC across product, design, architecture, development, testing, and close-out, with a plan that survives session restarts. The build checklist, builder gate results, and review-fix detail live in `docs/bmad-sdlc-build.memlog.md`; this document keeps the decisions, architecture, acceptance criteria, and risks.
 
@@ -33,7 +33,7 @@ One skill, `bmad-sdlc`, that the user invokes for the entire lifecycle. It:
 
 ## 4. Decision log
 
-D1–D25 were decided with the user on 2026-11-12; D26 was added on 2026-11-16; D27 and D28 were added on 2026-11-24. Each is binding for this build unless explicitly reopened.
+D1–D25 were decided with the user on 2026-11-12; D26 was added on 2026-11-16; D27–D29 were added on 2026-11-24. Each is binding for this build unless explicitly reopened.
 
 | # | Decision | Choice |
 |---|---|---|
@@ -63,6 +63,7 @@ D1–D25 were decided with the user on 2026-11-12; D26 was added on 2026-11-16; 
 | D26 | `bmad-loop` mapping (2026-11-16 review) | **Never name it as a skill.** `bmad-loop` is an orchestrator package, not an installed skill; `build.loop` resolves to `bmad-build-auto` and is offered only for batches the user asks for. |
 | D27 | Role split (2026-11-24) | **Three conductor roles: PM, DEV, QA.** `references/role-config.toml` is the single source of ownership (prefixes, phase mapping, track override for `audit`); `summary` reports `current_role`, `role_source`, and per-action `role`/`role_allowed`. Persona labels stay in `phase-map.md` for the skill each action calls; the conductor role decides who may run it. |
 | D28 | Role decisions (2026-11-24 round 11) | **D1:** QA owns `build.review` and `build.done`; DEV builds, QA reviews and approves done, and the audit action override is redundant. **D2:** the role is persisted per workstream as `role_override`, written by the `role` verb with a logged reason; `--role` is a per-read view; `resume`, `resize`, and `done` clear the override. **D3:** conductor-only actions (`close.mark_done`, `<phase>.unblock`) are role-free and open to every role, so no role is named as closer. |
+| D29 | Contract and ownership corrections (2026-11-24 round 12) | **Headless:** `headless.md` §Emitted block is the only field set; it keeps the position keys and omits the per-level tallies, ticket detail, and the action catalog. **Blocked:** `blocked_by` is an ordered array of action ids starting with `next_action.action`. **Roles:** `role-config.toml` is required (no in-script fallback) and carries no `name`/`references` keys; an unknown `role_override` fails `validate` and `summary`. **Ownership:** every gate write stores `actor` on the node; the ticket's builder cannot decide its `review` or `done`; a phase advance by a foreign role needs a reason; `verify-return` requires the returned role to own the returned action. **Menu:** `summary.actions[]` carries a `role` for every action so the gateless ones are filterable. |
 
 D13 merged into D2; D21 merged into D9.
 
