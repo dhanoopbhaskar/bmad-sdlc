@@ -2,22 +2,9 @@
 
 This is the reference for track, size, phase, action, and legal-now questions. Load it whenever the user picks a phase.
 
-Gate levels are derived; `summary` wins (`SKILL.md` §References). `resize` recomputes them after a size or track change. `greenfield` and `feature` share the same levels; only `fix`, `audit`, and the `trivial` size narrow them.
+Gate levels are derived; `summary` wins (`SKILL.md` §Precedence). `resize` recomputes them after a size or track change. `greenfield` and `feature` share the same levels; only `fix`, `audit`, and the `trivial` size narrow them.
 
 **Required before conditional.** `summary`'s `next_action` recommends a required gate before a conditional one. Conditional gates are available early: the user may run one by name before the stories gates, and `optional_actions` lists the open optional gates. The per-track flows show a natural order, not a lock.
-
-## Contents
-
-- [Track detection](#track-detection)
-- [Sizing](#sizing)
-- [Role labels](#role-labels)
-- [Plan phase](#plan-phase)
-- [Solution phase](#solution-phase)
-- [Build phase](#build-phase)
-- [Verify phase](#verify-phase)
-- [Close phase](#close-phase)
-- [Advisory actions](#advisory-actions)
-- [Per-track flows](#per-track-flows)
 
 ## Track detection
 
@@ -38,16 +25,16 @@ BMAD's four right-sized paths. Size decides how many actions and gates apply, no
 
 | Size | Signal | Path |
 |---|---|---|
-| `trivial` | Obvious, low risk, one small edit, reviewer can self-check. | Short-circuit: `build.ticket` → `build.review` → `build.done`. Skip planning and verification gates. |
-| `one-session` | One coherent implementation unit, roughly one Build session. | `frame.spec` (or direct intent) → `build.ticket` → `build.review` → `build.done` → `verify.*` as needed. |
-| `epic` | One outcome needing several Build sessions. | Plan → stories → Build × stories → verify → retro. |
-| `project` | Several epics or about 20 or more sessions, or multiple teams/systems. | Shared contracts (PRD, UX, architecture) → epics repeated → integrated product. |
+| `trivial` | Obvious, low risk, one small edit, reviewable in one pass by an independent role. | Short-circuit: `build.ticket` → `build.review` → `build.done`. Skip planning and verification gates. |
+| `one-session` | One coherent implementation unit, roughly one Build session. | See §Per-track flows. |
+| `epic` | One outcome needing several Build sessions. | See §Per-track flows. |
+| `project` | Several epics or about 20 or more sessions, or multiple teams/systems. | See §Per-track flows. |
 
 When two sizes both fit, choose the smaller and promote later. The user can resize at any gate. A `fix` or `audit` with no explicit size is `one-session`, even when a configured default size exists. The `audit` track ignores size: `verify.trace` stays required even at `trivial`.
 
 ## Role labels
 
-This table names each persona and what the role owns. These labels are the voice the skill uses; which conductor role (PM, DEV, QA) may run the action is resolved from the action id by `role-config.toml` and shown in each action table's `Role` column. The `Role` column is a view of that file, not a second source: on disagreement, `role-config.toml` wins.
+This table names each persona and what the persona owns. These labels are the voice the skill uses; which conductor role (PM, DEV, QA) may run the action is resolved from the action id by `role-config.toml` and shown in each action table's `Role` column. The `Role` column is a view of that file, not a second source: on disagreement, `role-config.toml` wins.
 
 | Label | Persona | Owns |
 |---|---|---|
@@ -81,7 +68,7 @@ Frame the intent, then define and divide the work. Actions are independent tools
 Notes:
 
 - `plan.requirements` is satisfied by `frame.spec` or `plan.prd`. Do not require both.
-- `plan.ux` and `plan.architecture` are conditional. The conductor names the condition; the user can skip with an override.
+- `plan.ux` and `plan.architecture` are conditional. The conductor names the condition; the user can override with a reason when it does not apply.
 - In the current model, `plan.stories` and `plan.sprint` collapse into Sofia's ticket tree (`tickets.toml`). Do not ask for a separate sprint plan.
 - `plan.stories` for a `fix` is satisfied by either a single ticket or a direct build intent; record which in `phases.plan.note`. A one-session fix treats `plan.stories` as optional and starts at `build.ticket`.
 - A fix never inherits the epic planning set.
@@ -96,7 +83,7 @@ Decide how the work will be verified before building. The phase gates are condit
 | `solution.framework` | qa | test-architect | `bmad-testarch-framework` | `bmad-tea` | `solution.framework` |
 | `solution.ci` | qa | test-architect | `bmad-testarch-ci` | `bmad-tea` | `solution.ci` |
 
-If the project already has a mature test stack and CI, decide the solution gates `skipped` with a reason, record it in `phases.solution.note`, and only then mark the phase `skipped`. Do not skip silently.
+If the project already has a mature test stack and CI, override the solution gates with a reason, record it in `phases.solution.note`, and only then mark the phase `skipped`. Do not skip silently.
 
 ## Build phase
 

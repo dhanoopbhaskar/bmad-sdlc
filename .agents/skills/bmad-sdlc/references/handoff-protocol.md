@@ -1,24 +1,6 @@
 # Handoff Protocol
 
-BMAD recommends a fresh chat for each workflow to avoid context mixing. The conductor honors that: it owns the ledger, not the execution.
-
-## Contents
-
-- [Ladder](#ladder)
-- [Brief template (rung 1, fresh subagent)](#brief-template-rung-1-fresh-subagent)
-- [Fallback prompts (rung 3, user-run)](#fallback-prompts-rung-3-user-run)
-  - [User-run, planning action](#user-run-planning-action)
-  - [User-run, build action](#user-run-build-action)
-- [Return contract](#return-contract)
-- [Validation checklist](#validation-checklist)
-- [Role transitions](#role-transitions)
-  - [Handoff rules](#handoff-rules)
-  - [Transition table](#transition-table)
-- [Headless JSON](#headless-json)
-- [Blocked gate handling](#blocked-gate-handling)
-- [Subagent lifecycle](#subagent-lifecycle)
-- [What the conductor keeps](#what-the-conductor-keeps)
-- [Parallelism](#parallelism)
+BMAD recommends a fresh chat for each workflow to avoid context mixing. The conductor honors that: it owns the ledger, not the execution. The boundary is stated once, in §What crosses the boundary.
 
 ## Ladder
 
@@ -83,7 +65,7 @@ Return exactly this JSON:
 }
 ```
 
-Fill every `<...>` placeholder; never copy one literally. The subagent gets this brief plus its `Role:` and `Action:` lines, and `--role <role> --plan <ledger> --workstream <id>`. There is no `--action` flag and no session summary: it reads only the ledger and artifact files.
+Fill every `<...>` placeholder; never copy one literally. The subagent gets the brief, with its `Role:` and `Action:` lines filled in, plus read access to the ledger and audit trail. There is no `--action` flag and no session summary. The conductor validates the return with `verify-return --workstream <id>`; no other command names the workstream.
 
 ## Fallback prompts (rung 3, user-run)
 
@@ -115,11 +97,11 @@ Do not push or merge. When done, report the plan path, tests run, and review fin
 The conductor accepts a result only when:
 
 - `status` is `done`, and
-- `role` and `action` name the acting role and the action it ran, and match `--expect-role` / `--expect-action` when supplied, and
+- `role` and `action` name the acting role and the action it ran. A `done` return that omits either is rejected; `verify-return --allow-unattributed --reason` is the only waiver, and it is logged, and
 - the returned role owns the returned action (a role-free action is exempt), and
-- at least one artifact is claimed and exists on disk, is non-empty, and is inside `{project-root}`, and
-- no artifact is the ledger or the audit trail, and
-- the gate criteria are evidenced (not merely asserted): the `evidence` list is present, non-empty, and every entry exists inside `{project-root}`, and
+- at least one artifact is claimed and exists on disk, is non-empty, and is inside `{project-root}`; when `git status` is readable, at least one claimed artifact must appear as changed, or the return needs `--allow-unchanged-artifact --reason`, and
+- no artifact is the ledger, the audit trail, the return file, or a file under `.tmp/` beside the ledger, and
+- the gate criteria are evidenced (not merely asserted): the `evidence` list is present, non-empty, and every entry exists inside `{project-root}` and is not scratch, and
 - `open_questions` is empty, or `verify-return --accept-questions` records them as accepted in the audit trail, and
 - the ledger and audit trail are unchanged: their SHA-256 digests match the pre-handoff values.
 
@@ -134,7 +116,7 @@ A subagent must never write either file. `verify-return` rejects the return on a
 
 Run `verify-return` with `--memlog {workflow.memlog_path}` so a custom audit path is checked. `--allow-empty-artifacts` is only for an action whose brief explicitly produces no file; it requires `--reason`, is logged, and does not waive missing evidence.
 
-If `status` is `blocked` or `needs_input`, do not mark the workstream, phase, or ticket `done`. Record the blocker, present it to the user, and offer: answer and retry, switch to inline, or skip with override.
+If `status` is `blocked` or `needs_input`, do not mark the workstream, phase, or ticket `done`. Record the blocker, present it to the user, and offer: answer and retry, switch to inline, or override with a reason.
 
 If the subagent claims success but the artifact is missing, treat it as `blocked` and say what is missing. Never trust a claim over the filesystem.
 
@@ -144,8 +126,7 @@ Before accepting any handoff, confirm §Return contract is satisfied, then check
 
 1. **Scope** matches the action; a PRD is not a spec, a story is not an epic.
 2. **No unapproved irreversible actions**: check `git status` and recent commits if the action could have changed them.
-3. **Ledger untouched**: the ledger and audit hashes still match the values captured before the handoff; any mismatch is a rejected return, not a warning.
-4. **Decisions** proposed by the subagent are appended to `decisions` and logged, not silently adopted.
+3. **Decisions** proposed by the subagent are appended to `decisions` and logged, not silently adopted.
 
 ## Role transitions
 
@@ -154,8 +135,7 @@ The trigger is always `next_action.role_allowed: false`; the table explains when
 ### Handoff rules
 
 - Hand off when `next_action.role_allowed` is `false` — a role mismatch — regardless of whether a gate just passed. A blocked foreign gate needs a handoff with no pass at all.
-- The next role reads **only** the ledger and artifact files — no session context, no summaries.
-- Rollback: when the next role's entry gate fails, the **conductor** (never the handed-off role) records it and re-runs `summary` to re-resolve the role. Use `ticket --id <ticket> --gate <gate> --status blocked --reason "<gate> failed: <pointer>"` for a per-ticket gate, and `set --workstream <id> --path gates.<phase>.<gate>.status --value blocked --reason "<gate> failed: <pointer>"` for a phase gate. Named gates and valid ids: `gate-matrix.md` §Gate table.
+- Rollback: when the next role's entry gate fails, the **conductor** (never the handed-off role) records it and re-runs `summary` to re-resolve the role. Use `ticket --plan {workflow.ledger_path} --id <ticket> --gate <gate> --status blocked --reason "<gate> failed: <pointer>"` for a per-ticket gate, and `set --plan {workflow.ledger_path} --workstream <id> --path gates.<phase>.<gate>.status --value blocked --reason "<gate> failed: <pointer>"` for a phase gate. Named gates and valid ids: `gate-matrix.md` §Gate table.
 
 ### Transition table
 
@@ -173,61 +153,25 @@ The trigger is always `next_action.role_allowed: false`; the table explains when
 
 Within one role the phase advances without a handoff: `solution → verify → close` is all QA, and one ticket follows another within DEV. Between one ticket's `build.ticket` and its `build.review` the state is the per-ticket row above; QA does not wait for the whole Build phase.
 
-## Headless JSON
-
-`references/headless.md` §Emitted block owns the block's field set; build that block, then apply the role-mismatch fields below. This example shows only the role-mismatch subset, not a second shape:
-
-```json
-{
-  "status": "blocked",
-  "current_role": "dev",
-  "blocked_by": ["build.review"],
-  "pointer": "/path/to/review.md",
-  "next_action": {
-    "phase": "build",
-    "gate": "build.T1.review",
-    "action": "build.review",
-    "role": "qa",
-    "role_allowed": false,
-    "skill": "bmad-code-review",
-    "reason": "build.T1.review is a required open gate.",
-    "source": "computed"
-  },
-  "track": "feature",
-  "size": "epic",
-  "model": "v6",
-  "assumptions": []
-}
-```
-
-`blocked_by` is an ordered array of **action ids** — the actions `current_role` may not run — starting with `next_action.action`. `pointer` names the artifact that unblocks the first one. `next_action` is retained so the consumer can see the mismatch. **No `next_role` field** — read `next_action.role`. A role mismatch is `status: "blocked"` even when the skill is installed; never emit `ready` for an action `current_role` may not run.
-
 ## Blocked gate handling
 
 When a role is blocked by incomplete work from a previous role:
 
 - **DEV says**: "Blocked: waiting for PM to complete the spec at /path/to/SPEC.md → PM: `plan.requirements` gate not passed"
-- The conductor records the blocked gate with the `--reason` above; the handed-off role never writes the ledger.
+- The conductor records the blocked gate using the message above as `--reason`; the handed-off role never writes the ledger.
 - **No forced revise** — wait, run the `role` verb, or override with a reason.
 - **Ledger gate stays**: `plan.requirements` = `blocked` with the pointer recorded in the audit trail.
 
-## Subagent lifecycle
+## What crosses the boundary
 
-- Per-action spawn (fresh subagent per action)
-- Role's references loaded (base + role overlay)
-- No session summary passed — only ledger artifacts
-- Subagent returns JSON per §Return contract, including its `role` and `action` fields
-
-## What the conductor keeps
-
-The conductor keeps only:
+The subagent receives the brief, the ledger, and the artifact files it names — no session summary and no conductor context. The next role reads only the ledger and artifact files. The conductor keeps only:
 
 - the ledger and the audit trail
 - the current workstream's phase/gate position
 - the settled decisions and constraints
 - the pointers to artifacts
 
-It does not keep the full text of every artifact in context. Re-read what the next action needs.
+It does not keep the full text of every artifact in context. Re-read what the next action needs. Each action gets a fresh subagent, with the base and role references loaded.
 
 ## Parallelism
 

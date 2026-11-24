@@ -78,42 +78,50 @@ workstreams:
           level: required
           decided_at: '2026-11-24T17:05:14+05:30'
           override_reason:
+          actor: pm
         stories:
           status: passed
           level: required
           decided_at: '2026-11-24T17:05:15+05:30'
           override_reason:
+          actor: pm
         sprint:
           status: passed
           level: required
           decided_at: '2026-11-24T17:05:16+05:30'
           override_reason:
+          actor: pm
         ux:
-          status: skipped
+          status: overridden
           level: conditional
           decided_at: '2026-11-24T17:05:17+05:30'
           override_reason: not applicable
+          actor: pm
         architecture:
-          status: skipped
+          status: overridden
           level: conditional
           decided_at: '2026-11-24T17:05:18+05:30'
           override_reason: not applicable
+          actor: pm
       solution:
         test_design:
-          status: skipped
+          status: overridden
           level: conditional
           decided_at: '2026-11-24T17:05:19+05:30'
           override_reason: mature stack
+          actor: qa
         framework:
-          status: skipped
+          status: overridden
           level: conditional
           decided_at: '2026-11-24T17:05:20+05:30'
           override_reason: mature stack
+          actor: qa
         ci:
-          status: skipped
+          status: overridden
           level: conditional
           decided_at: '2026-11-24T17:05:21+05:30'
           override_reason: mature stack
+          actor: qa
       build: {}
       verify:
         trace:
@@ -150,18 +158,22 @@ workstreams:
             status: passed
             decided_at: '2026-11-24T17:05:23+05:30'
             override_reason:
+            actor: dev
           tests:
-            status: skipped
+            status: overridden
             decided_at: '2026-11-24T17:05:24+05:30'
             override_reason: no baseline
+            actor: dev
           review:
             status: passed
             decided_at: '2026-11-24T17:05:26+05:30'
             override_reason:
+            actor: qa
           done:
             status: passed
             decided_at: '2026-11-24T17:05:27+05:30'
             override_reason:
+            actor: qa
     decisions: []
     next:
       phase: verify

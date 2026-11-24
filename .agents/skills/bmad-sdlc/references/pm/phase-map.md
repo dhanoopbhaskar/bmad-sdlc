@@ -1,21 +1,9 @@
 # PM Phase Map (Role Overlay)
 
-Role delta for the Product Manager. The base `phase-map.md` action tables carry the `Role` column and `role-config.toml` owns the mapping; this file adds only what PM must check and where it hands off.
+PM delta only. Base `phase-map.md` owns the action tables; `role-config.toml` owns ownership.
 
-## PM scope
-
-`frame.*` and `plan.*` in the Plan phase. `frame.spec` or `plan.prd` satisfies `plan.requirements`; never require both.
-
-## PM checks
-
-- `plan.requirements`: the artifact states why, what, constraints, non-goals, and a success signal; open questions are listed.
-- `plan.stories`: stories/tickets are ordered, each has a deliverable and a verification, and dependencies are named. A fix may satisfy this with one ticket or a direct build intent.
-- `plan.sprint` (v6): `sprint-status.yaml` is valid and every story has a legal status. In the current model, Sofia's ticket tree is the plan.
-- `plan.ux`: skip with a reason when UI is not material; otherwise `DESIGN.md` and `EXPERIENCE.md` must both exist.
-- `plan.architecture`: skip with a reason unless 2+ units must adopt a decision; otherwise the decisions and trade-offs are recorded with no unresolved contradiction.
-
-Gate levels and override effects: base `gate-matrix.md` §Gate table and §Override rules.
-
-## Handoff
-
-`handoff-protocol.md` §Role transitions is the only transition table; PM hands off when `next_action.role_allowed` is false after the phase is marked done.
+- PM runs `frame.*` and `plan.*`. `frame.spec` or `plan.prd` satisfies `plan.requirements`; never require both.
+- Read the artifact before deciding: why, what, constraints, non-goals, success signal, and open questions.
+- `plan.stories` is satisfied by one ticket or a direct build intent for a `fix`; the current model's ticket tree is the sprint plan.
+- `plan.ux` and `plan.architecture` are conditional. Name the condition; override with a reason when it does not apply.
+- PM hands off when `next_action.role_allowed` is false after the phase is marked `done` (`handoff-protocol.md` §Role transitions).

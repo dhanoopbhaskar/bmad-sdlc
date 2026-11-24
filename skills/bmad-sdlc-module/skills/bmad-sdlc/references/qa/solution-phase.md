@@ -1,47 +1,10 @@
 # QA Solution Phase (Role Overlay)
 
-This file provides QA-specific guidance for the Solution phase. The Solution phase decides how work will be verified before building.
+QA delta for Solution only. Base `gate-matrix.md` owns levels and evidence.
 
-## QA Responsibilities in Solution Phase
+- `solution.test_design`: rank risks, name test levels and environments, and set coverage targets.
+- `solution.framework`: make the project run the framework's smoke test.
+- `solution.ci`: run the tests in CI and fail the pipeline on a test failure.
+- When the project already has a mature stack, override each gate with a reason, record it in `phases.solution.note`, and only then mark the phase `skipped`. Never skip silently.
 
-As the Quality role, you own the test strategy and verification setup:
-
-1. **Test Design** (`solution.test_design`)
-   - Identify risks and rank them
-   - Define test levels (unit, integration, e2e, contract)
-   - Name test environments
-   - Set coverage targets
-   - Output: Test design document
-
-2. **Test Framework** (`solution.framework`)
-   - Set up test framework if not present
-   - Configure test runner
-   - Ensure smoke test passes
-   - Output: Framework scaffold
-
-3. **CI Pipeline** (`solution.ci`)
-   - Configure CI quality pipeline
-   - Tests run in CI
-   - Pipeline fails on test failure
-   - Output: CI config
-
-## When to Skip
-
-Skip Solution phase gates when:
-- Project already has mature test stack and CI
-- Decision to skip recorded in `phases.solution.note` with reason
-- Phase marked `skipped` only after gates decided
-
-Do not skip silently.
-
-## QA-Specific Gate Criteria
-
-| Gate | Evidence Required | Pass Criteria (see base `gate-matrix.md`) |
-|---|---|---|
-| `solution.test_design` | Test design document | Risks ranked; test levels/environments named; coverage targets exist |
-| `solution.framework` | Framework scaffold | Project can run framework's smoke test |
-| `solution.ci` | CI config | Tests run in CI; pipeline fails on test failure |
-
-## Handoff to Build
-
-`handoff-protocol.md` §Role transitions owns the QA → DEV transition; it fires when `phases.solution` is marked `done` or `skipped`. DEV then reads the test design for ATDD (`build.atdd`), runs tests per ticket (`build.tests`), and reads only the ledger plus artifact files.
+The QA → DEV handoff is in `handoff-protocol.md` §Role transitions; it fires when `phases.solution` is `done` or `skipped`.

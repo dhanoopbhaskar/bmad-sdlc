@@ -2,16 +2,6 @@
 
 BMAD is moving from the v6 flow (`bmad-help`, epics/stories, `sprint-status.yaml`) to the current flow (`bmad` hub, Sofia the Product Owner, `tickets.toml`). The conductor must work on both without pretending a missing skill exists.
 
-## Contents
-
-- [Detection](#detection)
-- [Skill mapping](#skill-mapping)
-- [Alias resolution](#alias-resolution)
-- [Missing-skill behavior](#missing-skill-behavior)
-- [Current-model notes](#current-model-notes)
-- [v6 notes](#v6-notes)
-- [Version change mid-workstream](#version-change-mid-workstream)
-
 ## Detection
 
 Run:
@@ -42,6 +32,8 @@ Detection order:
 
 Tell the user the detected model once, plainly. Do not make them choose unless detection is `unknown`.
 
+Write the model only when detection confirmed it or the user answered; `--reason` to downgrade or reopen a phase. A silent detector never overwrites a confirmed model. `init` takes `--model` only when creating the ledger; on an existing ledger it appends a workstream and refuses a model change. Change an existing ledger with `set --path bmad.model --value <model> --reason <why>` (the reason is needed to downgrade or when the change reopens a phase).
+
 ## Skill mapping
 
 Per-action resolution is in the `v6 skill` and `Current-model skill` columns of `phase-map.md`; the current-model skill is also the alias when the model's skill is absent. Only these capabilities have no per-action row:
@@ -68,7 +60,7 @@ Never call a skill that is not installed. Never claim an artifact was produced b
 
 | Situation | Behavior |
 |---|---|
-| Core skill missing (e.g., no `bmad-build`) | Set `status` to `blocked` in the emitted block. Say: "`bmad-build` is not installed under this project. Re-run the BMAD installer for this project, then return." Name the skill from `next_action.skill`, not an unlisted persona agent. Do not invent an installer command. Record the reason with `set --workstream <id> --path phases.<phase>.note --value "missing: bmad-build"`; do not mark the phase `blocked` (that replaces the action with `<phase>.unblock`). `next_action.skill_installed: false` triggers this rule; so does `skill_manifest_only: true`, where the installer declared the name but no readable `SKILL.md` exists. |
+| Core skill missing (e.g., no `bmad-build`) | Set `status` to `blocked` in the emitted block. Say: "`bmad-build` is not installed under this project. Re-run the BMAD installer for this project, then return." Name the skill from `next_action.skill`, not an unlisted persona agent. Do not invent an installer command. Record the reason with `set --plan <ledger> --workstream <id> --path phases.<phase>.note --value "missing: bmad-build"`; do not mark the phase `blocked` (that replaces the action with `<phase>.unblock`). `next_action.skill_installed: false` triggers this rule; so does `skill_manifest_only: true`, where the installer declared the name but no readable `SKILL.md` exists. |
 | Audit review skill missing | If neither `bmad-code-review` nor `bmad-build`'s built-in review is available, block `build.review` and name the install step. |
 | Test skills missing | The `solution` and `verify` actions are blocked unless the user accepts a manual substitute (e.g., run the project's own test suite) and records an override. |
 | Hub missing but focused skills present | Use the conductor's own menu; do not require `bmad-help`. |

@@ -460,3 +460,31 @@ Highest-impact open items: the headless block's field set is defined twice with 
 - **290/290** unittest cases pass (`uv run --no-cache python -m unittest discover -s .agents/skills/bmad-sdlc/scripts/tests -p 'test_*.py'`, 290 tests in 962 s). The suite grew from 276 by 14 role cases (action catalog, blocked-phase unblock, per-phase scoping, workstream-detail roles, self-approval runtime and `validate` proof, foreign phase advance, unknown `role_override`, `role --clear`, init model change, actor recording, phase-gate foreign actor, mismatched `--expect-action`, missing role config, unknown track keys) and the package-content case.
 - `package.sh --check` is in sync after repackaging.
 - The eval suite is updated but **not re-graded in this pass**: three cases were added and every headless/role rubric gained the key-set, memlog, assumptions, and derived-status assertions. Grading is a review-time activity (`evals/README.md` §Grading); running 17 cases without reading each transcript would produce a score that is not evidence, which the README explicitly warns against. The next review round should execute and grade it.
+
+## Round 13 (2026-11-24)
+
+Source: `2026-11-24-bmad-sdlc-r13.md` / `.findings.json`. All 70 findings were addressed in one pass.
+
+### Separation of duties and handoff (R13-01..04, 06, 19..21, 36, 37, 41)
+- `--as` now needs `--reason` and is logged as `(as=explicit, reason: ...)`; the suite helper adds a reason only where a test writes as the owner.
+- `verify-return` rejects an unattributed `done` return (`--allow-unattributed --reason` waives it), rejects a return-file or `.tmp/` artifact, and takes `--workstream`.
+- A returned artifact must appear in `git status` when git is readable (`--allow-unchanged-artifact --reason` waives it).
+- `validate` fails a decided gate without an `actor`; `migrate` backfills it. Tests cover the `set` self-approval route, one-digest refusal, and the `--allow-empty-artifacts` audit line.
+
+### Ledger state machine and close (R13-05..08, 17, 18, 22..35)
+- `init` on an existing ledger keeps the recorded model and refuses a model change (use `set --path bmad.model`); `--force` requires a reason even without a ledger and rotates a timestamped backup.
+- `done` leaves `phases.build` open when `--accept-missing-tickets` waives an unbuilt build, records auto-advanced phases in the close note, and only requires pointers for passed required/conditional gates.
+- Phase evidence can be pruned with `set ... --evidence ... --replace --reason`; a whole-phase replacement and `append` validate every incoming path, including a numeric JSON value.
+- `reconcile --write` returns a gate it blocked to `open` when its artifact resolves; `migrate` repairs paused/done workstreams, drops unknown gates, and backfills actors.
+- Pausing or switching stamps `updated`; `resize` needs `--track` or `--size` and keeps a role override on a no-op; `done` and `reconcile` refuse a malformed config.
+- Gate writes append the audit intent before saving the ledger.
+
+### Contract, CLI, and headless (R13-09..16, 68..70)
+- `skipped` is optional-only; declining a required or conditional gate writes `overridden` with a reason (commands and `validate` enforce it).
+- Headless `ready` means run one action and stop before the gate; a corrupt ledger emits `ledger.corrupt`; a blocked run logs `(blocked)`.
+- Advisory ids are in `summary.actions[]`; `SKILL.md` stops when no ledger exists, splits create/append `init`, names `summary` flags, and moves the scratch and symlink `..` rules to the steps that need them.
+- Docs and examples carry `--plan`, use "role deltas", and resolve the skipped/overridden contradiction.
+
+### Evals and editorial (R13-39, 40, 42..67)
+- `force-headless` stages a ledger and asserts it is byte-identical; key-set checks are top-level; `consent-before-commit` names a feasible change set.
+- Role overlays are reduced to true deltas; the role ladder, duplicated invariants, and seven hand-maintained Contents blocks are gone; the gate table leads its file and drops the duplicated condition column; guardrails are grouped; vocabulary is defined before the first instruction.

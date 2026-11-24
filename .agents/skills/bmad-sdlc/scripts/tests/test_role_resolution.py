@@ -108,6 +108,30 @@ class RoleConfigTests(unittest.TestCase):
             self.assertEqual(sdlc.role_for_action("build.done", track), "qa")
             self.assertEqual(sdlc.role_for_action("build.ticket", track), "dev")
 
+    def test_track_action_override_wins_over_the_prefix(self) -> None:
+        """The advertised first-precedence rule is exercised, not just parsed."""
+        custom = Path(tempfile.mkdtemp(prefix="bmad-sdlc-roleoverride-"))
+        self.addCleanup(shutil.rmtree, custom, True)
+        config = custom / "role-config.toml"
+        text = ROLE_CONFIG.read_text(encoding="utf-8").replace(
+            "[track_action_overrides]\n",
+            '[track_action_overrides]\n"fix.verify.trace" = "dev"\n',
+            1,
+        )
+        config.write_text(text, encoding="utf-8")
+        original = sdlc.ROLE_CONFIG_PATH
+        try:
+            sdlc.ROLE_CONFIG_PATH = config
+            sdlc.role_config.cache_clear()
+            self.assertEqual(sdlc.role_for_action("verify.trace", "fix"), "dev")
+            self.assertTrue(sdlc.role_allows("verify.trace", "dev", "fix"))
+            self.assertFalse(sdlc.role_allows("verify.trace", "qa", "fix"))
+            # A different track keeps the prefix owner.
+            self.assertEqual(sdlc.role_for_action("verify.trace", "feature"), "qa")
+        finally:
+            sdlc.ROLE_CONFIG_PATH = original
+            sdlc.role_config.cache_clear()
+
     def test_phase_roles_cover_the_lifecycle(self) -> None:
         phase_roles = self.config["phase_roles"]
         for phase in PHASES:
@@ -416,11 +440,13 @@ class SummaryRoleTests(unittest.TestCase):
         ]
         if gate in ("review", "done"):
             args += ["--as", "qa"]
+        if "--as" in args and "--reason" not in args:
+            args += ["--reason", "role fixture"]
         run(*args)
 
     def plan_done(self) -> None:
         self.decide("plan", ("requirements", "stories", "sprint"), "passed")
-        self.decide("plan", ("ux", "architecture"), "skipped")
+        self.decide("plan", ("ux", "architecture"), "overridden")
         self.mark("plan", "done")
 
     def test_plan_phase_owns_pm_actions(self) -> None:
@@ -441,7 +467,7 @@ class SummaryRoleTests(unittest.TestCase):
     def test_stored_phase_advances_only_when_marked_done(self) -> None:
         self.init("greenfield", "epic")
         self.decide("plan", ("requirements", "stories", "sprint"), "passed")
-        self.decide("plan", ("ux", "architecture"), "skipped")
+        self.decide("plan", ("ux", "architecture"), "overridden")
         # Every plan gate is decided, but the phase is not done: the role stays
         # PM and the stored phase is not rewritten to the recommended phase.
         undecided = self.summary()
@@ -796,6 +822,8 @@ class SummaryRoleTests(unittest.TestCase):
             "passed",
             "--as",
             "qa",
+            "--reason",
+            "QA recorded the trace gate",
         )
         self.assertEqual(allowed.returncode, 0, allowed.stdout)
         memlog = (self.root / "_bmad-output" / "sdlc" / ".memlog.md").read_text()
@@ -804,7 +832,7 @@ class SummaryRoleTests(unittest.TestCase):
     def test_blocked_phase_recommends_unblock(self) -> None:
         self.init("greenfield", "epic")
         self.decide("plan", ("requirements", "stories", "sprint"), "passed")
-        self.decide("plan", ("ux", "architecture"), "skipped")
+        self.decide("plan", ("ux", "architecture"), "overridden")
         run(
             "set",
             "--plan",
@@ -869,6 +897,7 @@ class SummaryRoleTests(unittest.TestCase):
             {action for action, _ in sdlc.GATE_ACTIONS.values()}
             | {action for action, _ in sdlc.TICKET_ACTIONS.values()}
             | set(sdlc.SKILL_ACTION_IDS)
+            | set(sdlc.ADVISORY_ACTION_IDS)
             | set(sdlc.ROLE_FREE_ACTIONS)
         )
         for action in sorted(expected):
@@ -914,12 +943,60 @@ class SummaryRoleTests(unittest.TestCase):
         self.assertIn("T1 review=passed by qa", trail)
         self.assertIn("T1 done=passed by qa", trail)
 
+    def test_self_approval_is_refused_through_the_set_route(self) -> None:
+        """The set editor must apply the same guard as the ticket command."""
+        self.init("fix", "trivial")
+        self.ticket("ticket")
+        refused = run_full(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "tickets.T1.gates.review.status",
+            "--value",
+            "passed",
+            "--reason",
+            "reviewing my own change",
+        )
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("decided by dev", json.loads(refused.stdout)["error"])
+        allowed = run_full(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "tickets.T1.gates.review.status",
+            "--value",
+            "passed",
+            "--as",
+            "qa",
+            "--reason",
+            "QA reviewed the change",
+        )
+        self.assertEqual(allowed.returncode, 0, allowed.stdout)
+
     def test_phase_advance_by_foreign_role_needs_a_reason(self) -> None:
         self.init("fix", "trivial")
         self.ticket("ticket")
         self.ticket("tests", "skipped")
         self.ticket("review")
         self.ticket("done")
+        # Persist the foreign role without --as; the phase owner is still DEV.
+        run(
+            "role",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--role",
+            "qa",
+            "--reason",
+            "handoff to QA",
+        )
         refused = run_full(
             "set",
             "--plan",
@@ -930,8 +1007,6 @@ class SummaryRoleTests(unittest.TestCase):
             "phases.build.status",
             "--value",
             "done",
-            "--as",
-            "qa",
         )
         self.assertNotEqual(refused.returncode, 0)
         self.assertIn("belongs to dev", json.loads(refused.stdout)["error"])
@@ -946,8 +1021,6 @@ class SummaryRoleTests(unittest.TestCase):
             "phases.build.status",
             "--value",
             "done",
-            "--as",
-            "qa",
             "--reason",
             "ticket closed by QA",
         )
@@ -1060,7 +1133,8 @@ class SummaryRoleTests(unittest.TestCase):
         trail = (self.root / "_bmad-output" / "sdlc" / ".memlog.md").read_text()
         self.assertIn("role cleared (reason: handoff complete)", trail)
 
-    def test_init_model_change_on_an_existing_ledger(self) -> None:
+    def test_init_refuses_a_model_change_on_an_existing_ledger(self) -> None:
+        """Appending a workstream must not migrate the whole document."""
         self.init("fix", "trivial", model="v6")
         run(
             "set",
@@ -1075,36 +1149,7 @@ class SummaryRoleTests(unittest.TestCase):
             "--reason",
             "role fixture",
         )
-        paused = run_full(
-            "init",
-            "--project-root",
-            str(self.root),
-            "--name",
-            "Role Fixture",
-            "--track",
-            "fix",
-            "--size",
-            "trivial",
-            "--model",
-            "current",
-        )
-        self.assertNotEqual(paused.returncode, 0)
-        self.assertIn("reopen it before changing the model", json.loads(paused.stdout)["error"])
-
-        run(
-            "set",
-            "--plan",
-            str(self.ledger),
-            "--workstream",
-            "ws-001",
-            "--path",
-            "status",
-            "--value",
-            "active",
-            "--reason",
-            "role fixture",
-        )
-        changed = run(
+        refused = run_full(
             "init",
             "--project-root",
             str(self.root),
@@ -1119,10 +1164,36 @@ class SummaryRoleTests(unittest.TestCase):
             "--reason",
             "model upgraded",
         )
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn(
+            "change the model first with", json.loads(refused.stdout)["error"]
+        )
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "status",
+            "--value",
+            "active",
+            "--reason",
+            "role fixture",
+        )
+        changed = run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--path",
+            "bmad.model",
+            "--value",
+            "current",
+            "--reason",
+            "model upgraded",
+        )
         self.assertTrue(changed["ok"], changed)
-        self.assertEqual(changed["model"], "current")
-        trail = (self.root / "_bmad-output" / "sdlc" / ".memlog.md").read_text()
-        self.assertIn("model", trail.lower())
+        self.assertIn("model: current", self.ledger.read_text(encoding="utf-8"))
 
     def test_gate_nodes_record_the_deciding_actor(self) -> None:
         self.init("fix", "trivial")

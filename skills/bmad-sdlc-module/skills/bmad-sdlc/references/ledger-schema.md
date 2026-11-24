@@ -6,14 +6,6 @@ The ledger is the conductor's durable memory. It lives at `{workflow.ledger_path
 
 An audit workstream has one synthetic ticket, `audit`. Its `review` gate is required; `ticket`, `tests`, and `done` are `skipped` because an audit reviews existing work rather than building a ticket.
 
-## Contents
-
-- [Shape](#shape)
-- [Field rules](#field-rules)
-- [Script operations](#script-operations)
-- [Resume semantics](#resume-semantics)
-- [Multiple workstreams](#multiple-workstreams)
-
 ## Shape
 
 ```yaml
@@ -152,25 +144,25 @@ workstreams:
 | `project` | Non-empty string. Defaults to the repo/folder name. |
 | `bmad.model` | `v6`, `current`, or `unknown`. Recorded by `init` from detection; changed with `set`. Do not guess after detection. |
 | `artifacts.*` | Absolute path, `{project-root}`-relative path, or null. Pointers, not content. |
-| `phases.*.status` | One of `pending`, `active`, `done`, `skipped`, `blocked`. Only one phase is `active` at a time. A `done`/`skipped` status is a cache — see `gate-matrix.md` §Phase completion. Reopening needs `--reason`, and advancing by a role other than the phase's owner needs one too. |
-| `phases.*.note` | Free text. When a phase with a required gate is skipped, its reason goes here. |
-| `workstreams.<id>.track` | `greenfield`, `feature`, `fix`, or `audit`. Change with `resize`; `set` rejects it. |
+| `phases.*.status` | One of `pending`, `active`, `done`, `skipped`, `blocked`. Only one phase is `active` at a time. A `done`/`skipped` status is a cache — see `gate-matrix.md` §Phase completion for completion and reopening. |
+| `phases.*.note` | Free text. When a phase is skipped, its reason goes here; `set phases.<phase>.status skipped --reason ...` writes it. |
+| `workstreams.<id>.track` | `greenfield`, `feature`, `fix`, or `audit`. Change with `resize` (which needs `--track` or `--size`); `set` rejects it. |
 | `workstreams.<id>.size` | `trivial`, `one-session`, `epic`, or `project`. Change with `resize`; `set` rejects it. |
-| `workstreams.<id>.status` | `active`, `paused`, or `done`. Resume with `set --workstream <id> --path status --value active` (with `--reason` when reopening a done workstream); close with `done`, never `set`. |
+| `workstreams.<id>.status` | `active`, `paused`, or `done`. Resume with `set --plan <ledger> --workstream <id> --path status --value active` (with `--reason` when reopening a done workstream); close with `done`, never `set`. |
 | `workstreams.<id>.current_phase` | Derived position, refreshed by mutating commands. `summary` reports it unchanged; the recommended `summary.phase` may be a later phase. |
 | `workstreams.<id>.role_override` | Optional persisted role, one of the ids in `role-config.toml` (`pm`, `dev`, `qa` shipped). Written by the `role` verb with a logged reason; wins over track and phase detection. Cleared by `resume`, `resize`, and `done`; `role --clear` refuses on a paused workstream. |
-| `gates.<phase>.<name>.status` | One of `open`, `passed`, `overridden`, `skipped`, `blocked`. `blocked` means the evidence pointer is missing; it is not a pass. |
-| `gates.<phase>.<name>.actor` | The role that decided the gate (`ticket.<gate>.actor` for a per-ticket gate). Written by the command from `--as` or the resolved `current_role`; never supplied in a payload. `validate` and a later reviewer read it to check that the builder did not also review or approve. |
-| `gates.<phase>.<name>.level` | `required`, `conditional`, or `optional`. **Derived** from track/size/model; the stored value is a cache — `summary` wins (`SKILL.md` §References). `validate` reports drift; `resize` or `migrate` rewrites it. |
-| `tickets.<id>.gates.<gate>.status` | One of `open`, `passed`, `overridden`, `skipped`, `blocked`. Gates are `ticket`, `tests`, `review`, `done`. |
+| `gates.<phase>.<name>.status` | One of `open`, `passed`, `overridden`, `skipped`, `blocked`. `blocked` means the evidence pointer is missing; it is not a pass. `skipped` is only for an optional gate that does not apply; declining a required or conditional gate is `overridden`. |
+| `gates.<phase>.<name>.actor` | The role that decided the gate (`ticket.<gate>.actor` for a per-ticket gate). Written by the command from `--as` or the resolved `current_role`; never supplied in a payload. `validate` fails a decided gate without one, and a later reviewer reads it to check that the builder did not also review or approve. |
+| `gates.<phase>.<name>.level` | `required`, `conditional`, or `optional`. **Derived** from track/size/model; the stored value is a cache — `summary` wins (`SKILL.md` §Precedence). `validate` reports drift; `resize` or `migrate` rewrites it. |
+| `tickets.<id>.gates.<gate>.status` | One of `open`, `passed`, `overridden`, `skipped`, `blocked`. Gates are `ticket`, `tests`, `review`, `done`. `skipped` is optional-only; use `overridden` with a reason to decline a required or conditional gate. |
 | `tickets.<id>.gates.<gate>.evidence` | Optional pointer to the artifact that decided a ticket gate (relative or absolute, inside the project root). `ticket --evidence <path>` writes it; the `done` command resolves it and requires one for an overridden gate. |
-| `override_reason` | Required when a required or conditional gate is `overridden` or `skipped`; `set`, `ticket`, and `validate` enforce it as an error. See `gate-matrix.md` §Override rules and §Reopening. |
+| `override_reason` | Required when a required or conditional gate is `overridden`; `set`, `ticket`, and `validate` enforce it as an error. An optional gate may be `skipped` with no reason. See `gate-matrix.md` §Override rules and §Reopening. |
 | `decisions` | Append-only list of `{at, decision, reason}`. `set` refuses to write it; use `append`, which fills `at` when missing. Never edit or delete. |
 | `next` | Written by mutating commands after they refresh the workstream. `summary` recomputes and reports `next_action_stale` when a hand edit disagrees on phase, gate, action, or ticket. |
 
 ## Script operations
 
-Every operation prints JSON. Mutating operations are atomic and take a file lock around the read-modify-write cycle; reads do not write. Run with `uv run --no-cache`. Exit 0 means `ok: true`; exit 1 means `ok: false` (or a hard error), so `validate && …` and CI checks can use the status.
+Every operation prints JSON. Mutating operations are atomic and take a file lock around the read-modify-write cycle; reads do not write. Run with `uv run --no-cache`. Exit 0 means `ok: true`; exit 1 means `ok: false` (or a hard error), so `validate && …` and CI checks can use the status. The audit line for a gate write is appended before the ledger is saved: a crash between the two leaves an explaining line, never a decided gate with no record. A malformed `_bmad/config*.toml` is refused by `init`, `done`, and `reconcile` rather than silently resolved to default folders. `migrate` repairs active, paused, and done workstreams, drops unknown gates, and backfills a missing `actor` from the phase owner.
 
 ### Summary shape
 
@@ -180,7 +172,7 @@ Every operation prints JSON. Mutating operations are atomic and take a file lock
 |---|---|
 | `phase`, `next_phase` | The recommended phase; equals `next_action.phase` when there is one. |
 | `next_action` | The next action, or null when paused/done. Fields and the role annotations are described under §Next action. |
-| `actions` | `[{phase, action, gate, ticket, role, role_free?, role_allowed}]` for every action of every phase, the gateless `frame.*`, `build.atdd`, `build.auto`, `build.loop`, `verify.e2e`, `verify.automate`, and `close.correct_course` included. `gate` is the gate id the action satisfies, or null when it has none. The menu filters on this list; `next_action` and `optional_actions` cover only what is next or optional.
+| `actions` | `[{phase, action, gate, ticket, role, role_free?, role_allowed}]` for every action of every phase, the gateless `frame.*`, `build.atdd`, `build.auto`, `build.loop`, `verify.e2e`, `verify.automate`, and `close.correct_course` included. Advisory actions (`advisory.*`) carry `phase: null` and `role: null`; the menu offers them as role-free. `gate` is the gate id the action satisfies, or null when it has none. The menu filters on this list; `next_action` and `optional_actions` cover only what is next or optional. |
 | `current_role`, `role_source` | The active role and why it was chosen: `explicit` (`--role`), `override` (the persisted `role` verb), `track`, `phase`, or `default`. Both are present even when no workstream is active (paused or closed), resolved from the last workstream's stored phase. |
 | `optional_actions` | Open optional actions the user may take now; each carries `role`, `role_free?`, and `role_allowed`. |
 | `open_gates`, `blocked_gates` | Every live open/blocked gate, per-ticket gates included. A phase marked `done`/`skipped` contributes only the gates that contradict its status; `phases[].open_gates` lists every open gate in that phase, whether or not the phase is `done`/`skipped`. |
@@ -209,7 +201,7 @@ Every operation prints JSON. Mutating operations are atomic and take a file lock
 
 #### A blocked phase
 
-A phase whose own status is `blocked`, with no gate left to decide, has `next_action` `{action: "<phase>.unblock", gate: null, role: null, role_free: true, role_allowed: true}`. Resolve the blocker, then clear the phase: `set --workstream <id> --path phases.<phase>.status --value active --reason <why>`. Finish or block any other active phase first; only one phase may be active.
+A phase whose own status is `blocked`, with no gate left to decide, has `next_action` `{action: "<phase>.unblock", gate: null, role: null, role_free: true, role_allowed: true}`. Resolve the blocker, then clear the phase: `set --plan <ledger> --workstream <id> --path phases.<phase>.status --value active --reason <why>`. Finish or block any other active phase first; only one phase may be active.
 
 ### Commands
 
@@ -222,12 +214,15 @@ A phase whose own status is `blocked`, with no gate left to decide, has `next_ac
 ... set --plan <ledger> --path artifacts.prd --value _bmad-output/prd-checkout/prd-checkout.md
 ... set --plan <ledger> --path "tickets.1-3-ticket-menu" --delete --reason "withdrawn"
 
-# resize: recomputes levels; --reason when a larger size reopens a phase
+# resize: needs --track or --size; recomputes levels; --reason when a larger size reopens a phase
 ... resize --plan <ledger> --workstream ws-001 --size one-session
 
 # append: phase evidence and decisions (append-only)
 ... append --plan <ledger> --path phases.plan.evidence --value <path>
 ... append --plan <ledger> --path decisions --value '{"decision":"...","reason":"..."}'
+
+# prune phase evidence: keep only the entries that still resolve
+... set --plan <ledger> --path phases.plan.evidence --value '["<kept>"]' --replace --reason "removed a deleted file"
 
 # ticket: per-ticket gate; use this for ids containing dots
 ... ticket --plan <ledger> --id "1.3" --gate review --status passed --evidence <path> --as qa
@@ -247,7 +242,7 @@ A phase whose own status is `blocked`, with no gate left to decide, has `next_ac
 
 # verify-return: pass the pre-handoff hashes; a mismatch rejects the return
 ... verify-return --plan <ledger> --project-root {project-root} --return-file <json> \
-  --expect-ledger-sha <sha256> --expect-memlog-sha <sha256> \
+  --workstream <id> --expect-ledger-sha <sha256> --expect-memlog-sha <sha256> \
   --expect-role qa --expect-action build.review
 
 # audit trail and validation
@@ -258,23 +253,23 @@ A phase whose own status is `blocked`, with no gate left to decide, has `next_ac
 ### set rules
 
 - `set` parses `--value` as JSON when possible, otherwise as a string; `--null` sets null.
-- A gate write records the acting role: `--as <role>` overrides the resolved `current_role`. A role that does not own the gate needs `--reason`; the audit line names the actor. `ticket` takes the same flag.
+- A gate write records the acting role: `--as <role>` overrides the resolved `current_role` and needs `--reason` to attest the switch. A role that does not own the gate also needs `--reason`; the audit line names the actor. `ticket` takes the same flag.
 - `role_override` is written by the `role` verb, never by `set`.
 - Omitting `--workstream` targets the active workstream for workstream-shaped paths; document paths (`schema`, `bmad.*`, `active_workstream`) stay at the root.
 - Replacing a whole node (`phases.<phase>`, `tickets.<id>`, a gate node, or a ticket gate node) needs `--replace --reason`. A phase replacement needs `status` and `evidence`; the derived `gate` and a gate node's `level` are carried forward.
 - Remove a ticket with `set --path tickets.<id> --delete --reason <why>`; a ticket with a decided gate, or the last ticket of a done build phase, cannot be deleted.
 - Create a ticket with the `ticket` command, not with `set`.
-- `decisions` and `phases.*.evidence` are append-only through `append`; `--replace` and `--null` are refused there too. Artifact pointers take `set`, not `append`.
+- `decisions` and `phases.*.evidence` are append-only through `append`; `--null` is refused there too. A phase evidence list can be pruned with `set --path phases.<phase>.evidence --value '[...]' --replace --reason <why>`; every kept entry must resolve. Artifact pointers take `set`, not `append`.
 - `--plan`, `--memlog`, `--template`, and `--project-root` expand `{project-root}`; every command that resolves a path accepts `--project-root`, and a relative `--plan`/`--memlog` resolves against it. `--memlog` and the recorded `bmad.memlog` must differ from the ledger.
 - `schema` is fixed at `bmad-sdlc/1`; `set` refuses any other value.
-- A whole-phase replacement must keep every existing `evidence` entry; new entries go through `append`.
+- A whole-phase replacement must keep every existing `evidence` entry unless it is an explicit `--replace` prune with a reason; new entries go through `append`.
 - Paused and done workstreams refuse writes; resume a paused one first, or reopen a done one with `--reason`.
 - `bmad.model` follows §Resume semantics → Model change.
 - Artifact pointers must resolve inside `{project-root}`.
 
 ### Hand-edit fallback
 
-If `uv` is unavailable, read and write the YAML directly with the same shape. Keep the writes atomic and take a sibling `.lock` file around the read-modify-write. Apply §Field rules by hand:
+If `uv` is unavailable, or the helper reports `ruamel.yaml is not installed`, run it with `uv run --no-cache <script>`; only then fall back to reading and writing the YAML directly with the same shape. Keep the writes atomic and take a sibling `.lock` file around the read-modify-write. Apply §Field rules by hand:
 
 - An override or reasoned skip carries `override_reason`; a decided gate carries `decided_at` and `actor`.
 - `decisions` stays append-only.
@@ -287,13 +282,13 @@ Log the hand edit to the audit trail, re-read the file, and present no gate from
 
 The ordered activation sequence is in `SKILL.md` §On Activation; it runs `detect`, `reconcile`, `summary`, then the menu. The ledger-only deltas are:
 
-- **Model change.** Use `set --path bmad.model --value <model>` on an existing ledger (pass `--model` to `init` only when creating it). A silent `unknown` must not overwrite a confirmed model. A downgrade, or a change that reopens a phase, needs `--reason`; `init --model unknown` refuses a downgrade without `--force --reason`.
-- **Pointer cases.** Artifact exists, pointer missing → `reconcile --write`. Pointer set, artifact missing → under `--write`, reconcile blocks every open required/conditional gate in `gates_to_block` and lists decided gates in `requires_reason`; apply those with `set ... --value blocked --reason <why>`. Phase evidence missing → the phases in `phases_to_block` are blocked the same way. Ticket status disagrees → artifacts win; update the ledger and log the correction. A ticket gate whose evidence pointer is missing → repoint it with `ticket --gate <gate> --status <same> --evidence <path>`, or reopen the gate with `--reason`, then reconcile again. Never substitute a path outside `{project-root}`.
-- **Corruption.** Run `validate`, then `migrate`: it creates missing nodes, carries derived fields forward, and reopens a phase whose gates it invalidates. A reopen needs `--reason`, which `migrate` records in the audit trail. If unrepairable, back up to `plan.yaml.bak`, re-run `init --force --reason`, and offer to re-import pointers from the artifacts. Never silently discard the old file.
+- **Model change.** Use `set --path bmad.model --value <model>` on an existing ledger (pass `--model` to `init` only when creating it; `init` on an existing ledger appends and refuses a model change). A silent `unknown` must not overwrite a confirmed model. A downgrade, or a change that reopens a phase, needs `--reason`; `init --model unknown` refuses a downgrade without `--force --reason`.
+- **Pointer cases.** Artifact exists, pointer missing → `reconcile --write`. Pointer set, artifact missing → under `--write`, reconcile blocks every open required/conditional gate in `gates_to_block` and lists passed gates in `requires_reason`; apply those with `set ... --value blocked --reason <why>`. An overridden gate with a reason is an accepted gap and is not blocked. A gate reconcile blocked returns to `open` once its artifact resolves; no override is needed. Phase evidence missing → the phases in `phases_to_block` are blocked the same way. Ticket status disagrees → artifacts win; update the ledger and log the correction. A ticket gate whose evidence pointer is missing → repoint it with `ticket --gate <gate> --status <same> --evidence <path>`, or reopen the gate with `--reason`, then reconcile again. Never substitute a path outside `{project-root}`.
+- **Corruption.** Run `validate`, then `migrate`: it repairs active, paused, and done workstreams, creates missing nodes, drops unknown gates, backfills a missing `actor`, carries derived fields forward, and reopens a phase whose gates it invalidates. A reopen needs `--reason`, which `migrate` records in the audit trail. If a ledger is unrepairable, back it up and re-run `init --force --reason` interactively, then offer to re-import pointers from the artifacts. `--force` writes `plan.yaml.bak` on the first reset and a timestamped `plan.yaml.<time>.bak` on a retry, so the first backup is never overwritten. Never silently discard the old file.
 
 ## Multiple workstreams
 
-- One `active_workstream` at a time. `init` appends a workstream and pauses the previously active one; `--force` recreates the ledger only with `--reason`, after writing `plan.yaml.bak` and a reset event.
+- One `active_workstream` at a time. `init` appends a workstream and pauses the previously active one, stamping both `updated`. Switching or pausing stamps the affected records too, so `summary` never reports a sibling as the most recent position. `--force` recreates the ledger only with `--reason`, after writing a backup and a reset event.
 - Switch with `set --path active_workstream --value ws-002` (no `--workstream`); the target becomes active and the previous active workstream is paused.
 - The status dashboard lists every workstream with track, size, status, and next action.
 - `validate` rejects more than one `status: active` workstream and an `active_workstream` that is not active.

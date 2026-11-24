@@ -2,16 +2,6 @@
 
 The conductor is menu-driven. Every activation and every transition ends with a menu, so the user never has to remember a skill name.
 
-## Contents
-
-- [Dashboard](#dashboard)
-- [Phase menu](#phase-menu)
-- [Action menu](#action-menu)
-- [Verbs](#verbs)
-- [Status view](#status-view)
-- [After an action](#after-an-action)
-- [Tone](#tone)
-
 ## Dashboard
 
 Render it first, and keep it scannable. Compute each row's totals from `summary.phases[]` (`required_open`, `conditional_open`, `optional_open`), not from this example: the flat top-level lists are totals and include per-ticket gates. Mark a `blocked` gate distinctly from `open`.
@@ -62,7 +52,7 @@ Mark the current phase with `→`. Mark locked phases with `·` and the missing 
 
 ## Action menu
 
-After a phase is chosen, show its actions. List every entry in `summary.actions[]` whose `phase` matches, whose `role` equals `current_role`, plus every `role_free` action (`advisory.*`, `close.mark_done`, `<phase>.unblock`). `summary.actions[]` is the filter: it carries a `role` for every action, including the gateless ones (`frame.*`, `build.atdd`, `verify.e2e`, `close.correct_course`) that `next_action` never names. Show the role, skill, and gate state. Headless mode replaces this menu with the block in `headless.md` §Emitted block.
+After a phase is chosen, show its actions. List every entry in `summary.actions[]` whose `phase` matches, whose `role` equals `current_role`, and every `role_free` action (`advisory.*`, `close.mark_done`, `<phase>.unblock`). `summary.actions[]` is the filter: it carries a `role` for every action, including the gateless ones (`frame.*`, `build.atdd`, `verify.e2e`, `close.correct_course`) that `next_action` never names and the phase-less advisory actions. Show the role, skill, and gate state. Headless mode replaces this menu with the block in `headless.md` §Emitted block.
 
 ```text
 Plan — choose an action (PM):
@@ -79,7 +69,7 @@ Plan — choose an action (PM):
   q. Quit
 ```
 
-Only list actions that are legal for the track and size. Mark the recommended action with `→`. Put required actions before optional ones, and the recommended action first within its group.
+Only list actions that are legal for the track and size. Mark the recommended action with `→`. Put required actions before optional ones, and the recommended action first within its group. Offer advisory actions when they add value; `{workflow.include_advisory_skills}` decides whether they appear.
 
 ## Verbs
 
@@ -92,16 +82,16 @@ Natural language works, but these verbs are stable:
 | `status` | Show the dashboard and full artifact paths. |
 | `phase <name>` | Jump to a phase menu. |
 | `run <action id>` | Run a specific action (e.g., `run plan.stories`). |
-| `skip` | Mark the current gate `skipped`; requires a reason when the gate is required or conditional. |
+| `skip` | Mark an optional gate `skipped`; for a required or conditional gate use `override <reason>`. |
 | `override <reason>` | Set the current gate `overridden` with the reason supplied inline. |
 | `revise` | Return to the last action with new direction. |
 | `review` | Run `bmad-review` on the current artifact. |
 | `switch <workstream>` | Change the active workstream; the previous active one is paused. |
 | `role <pm\|dev\|qa> <reason>` | Persist this workstream's role (`role_override`) with a logged reason; the next `summary` reports `role_source: override`. `role --clear` returns to phase detection. |
-| `resize <track> <size>` | Change track or size; recomputes every level and phase gate; clears `role_override`. |
+| `resize <track> <size>` | Change track or size; recomputes every level and phase gate; clears `role_override`. At least one of the two is required. |
 | `pause` / `resume <workstream>` | Change workstream status; resume needs the id because pause clears `active_workstream`. |
-| `done` | Mark the workstream done once every required/conditional gate is decided and no gate is blocked. |
-| `reopen <gate> <reason>` | Return a decided gate to `open`; requires a reason. If the gate's phase or workstream is `done`, reopen that first. |
+| `done` | Close the workstream; see `gate-matrix.md` §Phase completion for the refusals. |
+| `reopen <gate> <reason>` | Return a decided gate to `open`; see `gate-matrix.md` §Reopening. |
 | `help` | Explain the current position and the legal moves. |
 | `quit` | Exit; every write is already recorded. |
 
@@ -109,14 +99,14 @@ If the user types a skill name directly (e.g., `bmad-prd`), treat it as `run pla
 
 ## Status view
 
-`status` shows the dashboard rows, then per workstream: `current_role` with `role_source` (and any `role_override`), artifact paths, every gate with its level, status, and `decided_at`, ticket gate state, decisions, and overrides with reasons. Show `blocked` gates with the missing path, and show `reconcile`'s `missing_evidence`, `phases_to_block`, and `ambiguous_pointers` (several files match one artifact key). A `<phase>.unblock` next action means the phase is blocked with no gate left to show; the clearing procedure is in `ledger-schema.md` §Summary shape. Read ticket status from `sprint-status.yaml` or `tickets.toml` every time. If the read fails, say so and show the last known state; do not invent.
+`status` shows the dashboard rows, then per workstream: `current_role` with `role_source` (and any `role_override`), artifact paths, every gate with its level, status, and `decided_at`, ticket gate state, decisions, and overrides with reasons. Show `blocked` gates with the missing path, and show `reconcile`'s `missing_evidence`, `phases_to_block`, and `ambiguous_pointers` (several files match one artifact key). A `<phase>.unblock` next action means the phase is blocked with no gate left to show; the clearing procedure is in `ledger-schema.md` §A blocked phase. Read ticket status from `sprint-status.yaml` or `tickets.toml` every time. If the read fails, say so and show the last known state; do not invent.
 
 ## After an action
 
 Every action ends with the same three beats:
 
 1. **Result** — what was produced, where, and what it means.
-2. **Gate** — present the four-way choice (Approve / Revise / Run reviewer / Skip with override) and its ledger effect from `gate-matrix.md` §Gate interaction.
+2. **Gate** — present the four-way choice and its ledger effect from `gate-matrix.md` §Gate interaction.
 3. **Menu** — the next legal actions, with the recommendation and any `optional_actions`.
 
 Do not dump the whole artifact. Summarize the evidence and point to the path.
