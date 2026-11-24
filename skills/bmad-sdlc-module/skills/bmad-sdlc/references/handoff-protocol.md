@@ -148,3 +148,64 @@ It does not keep the full text of every artifact in context. Re-read what the ne
 - Plan actions may run in parallel when they share inputs and do not depend on each other (e.g., research + brief). The conductor asks once, before launching them together.
 - Build actions run one ticket per session. Parallel tickets are allowed only when their boundaries are explicit and the user accepts the merge risk.
 - The script serializes ledger and audit writes with a sibling `.lock` file. Never run two actions that write the same artifact or the same ledger section concurrently.
+
+---
+
+## Artifact-Driven Handoff Protocol (Role-Based)
+
+This section defines the role transition rules for the PM/DEV/QA split.
+
+### Handoff Rules
+
+- Handoff triggered **only** when a gate passes (artifact written to ledger)
+- Next role reads **only** the ledger + artifact files — no session context, no summaries
+- Subagent receives: `--role=<role> --ledger=<path> --action=<action>` — nothing else
+- Rollback: If next role's entry gate fails, ledger gate reverts to `blocked` with pointer to failed artifact
+
+### Role Transitions
+
+| From Role | To Role | Trigger Gate | Condition |
+|---|---|---|---|
+| PM | DEV | `plan.requirements` | `passed` (SPEC.md or PRD exists) |
+| PM | DEV | `plan.stories` | `passed` (epics/stories complete) OR track=fix with one-session size |
+| PM | DEV | `plan.sprint` | `passed` (for v6 model) |
+| DEV | QA | `build.done` | All tickets in sprint have `build.done` = `passed` |
+| DEV | PM | `plan.requirements` | `blocked` (waiting for spec) |
+| QA | PM | `close.correct_course` | Triggers replan |
+| QA | DEV | `verify.trace` | Finds gaps requiring build fixes |
+| QA | DEV | `verify.nfr` | Finds NFR failures requiring code changes |
+
+### Headless JSON (Extended)
+
+When role transitions, emit one JSON block:
+
+```json
+{
+  "status": "ready",
+  "next_action": "build.ticket",  // role is inferred from action
+  "current_role": "pm"
+}
+{
+  "status": "blocked",
+  "blocked_by": ["plan.requirements"],
+  "pointer": "/path/to/SPEC.md",
+  "current_role": "dev"
+}
+```
+
+**No `next_role` field** — the role is inferred from the next action's owner (dev for `build.*`, qa for `verify.*` and `close.*`, pm for `frame.*` and `plan.*`).
+
+### Blocked Gate Handling
+
+When a role is blocked by incomplete work from previous role:
+
+- **DEV says**: "Blocked: waiting for PM complete spec at /path/to/SPEC.md → PM: `plan.requirements` gate not passed"
+- **No forced revise** — must wait or switch role
+- **Ledger gate stays**: `plan.requirements` = `blocked` with pointer
+
+### Subagent Lifecycle
+
+- Per-action spawn (fresh subagent per action)
+- Role's references loaded (base + role overlay)
+- No session summary passed — only ledger artifacts
+- Subagent returns JSON per §Return contract
