@@ -3701,20 +3701,20 @@ def cmd_set(args: argparse.Namespace) -> None:
         if isinstance(value, dict) and value.get("memlog"):
             recorded = Path(str(value["memlog"]))
             bmad_roots = _known_project_roots(args, path, data)
-            root = bmad_roots[0] if bmad_roots else _default_project_root(path)
-            if root is None and getattr(args, "project_root", None):
-                root = _resolve_root(args)
-            if root is None:
+            bmad_root = bmad_roots[0] if bmad_roots else _default_project_root(path)
+            if bmad_root is None and getattr(args, "project_root", None):
+                bmad_root = _resolve_root(args)
+            if bmad_root is None:
                 fail(
                     "pass --project-root to set bmad.memlog for a ledger "
                     "outside the default layout"
                 )
             if not recorded.is_absolute():
-                recorded = root / recorded
+                recorded = bmad_root / recorded
             resolved_recorded = recorded.resolve()
             if resolved_recorded == path.resolve():
                 fail("the audit trail must differ from the ledger")
-            if not _inside(resolved_recorded, root):
+            if not _inside(resolved_recorded, bmad_root):
                 fail(
                     "the audit trail must resolve inside the project root: "
                     f"{resolved_recorded}"

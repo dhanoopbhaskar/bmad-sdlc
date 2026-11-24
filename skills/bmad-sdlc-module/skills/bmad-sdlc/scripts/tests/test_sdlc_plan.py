@@ -203,13 +203,11 @@ class LedgerTests(unittest.TestCase):
             "--path",
             "phases.plan.evidence",
             "--value",
-            "/tmp/spec.md",
+            "spec.md",
         )
         run("log", "--plan", str(self.ledger), "--text", "plan.requirements passed")
         summary = run("summary", "--plan", str(self.ledger))
-        self.assertEqual(
-            summary["phases"][0]["evidence"], ["/tmp/spec.md"]
-        )
+        self.assertEqual(summary["phases"][0]["evidence"], ["spec.md"])
         memlog = (self.ledger.parent / ".memlog.md").read_text()
         self.assertIn("plan.requirements passed", memlog)
         self.assertIn("updated:", memlog.split("---")[1])
@@ -4256,6 +4254,7 @@ class LedgerTests(unittest.TestCase):
                 "--status",
                 "passed",
             )
+        (self.tmp / "review.md").write_text("review\n", encoding="utf-8")
         run(
             "ticket",
             "--plan",
@@ -4273,7 +4272,6 @@ class LedgerTests(unittest.TestCase):
             "--evidence",
             "review.md",
         )
-        (self.tmp / "review.md").write_text("review\n", encoding="utf-8")
         closed = run(
             "done",
             "--plan",
