@@ -329,7 +329,7 @@ Source: `2026-11-17-bmad-sdlc-r9.md` / `.findings.json` (82 findings: 15 adversa
 
 ## Round 11 review (2026-11-24, open)
 
-Source: `2026-11-24-bmad-sdlc-r11.md` / `.findings.json` (23 findings: 5 adversarial, 9 edge-case, 4 verification-gap, 2 structure; overlaps kept).
+Source: `2026-11-24-bmad-sdlc-r11.md` / `.findings.json` (24 findings: 6 adversarial, 12 edge-case, 4 verification-gap, 2 structure; overlaps kept).
 
 Scope: the new role-based SDLC split (PM/DEV/QA) on top of HEAD `19f68f2` plus the staged working-tree changes. Status: `[ ]` open, `[~]` in progress, `[x]` fixed, `[-]` deferred (reason).
 
@@ -339,42 +339,50 @@ Highest-impact open items: `summary` drops the role fields on a paused or closed
 
 ### Phase 0 — decisions (record as D28 in `docs/bmad-sdlc.md`)
 
-- [ ] **D1** Decide whether `build.review`/`build.done` move to QA.
-- [ ] **D2** Decide whether a role switch is persisted (`role_override` + `role` verb) or removed.
-- [ ] **D3** Decide whether `close.mark_done` and `<phase>.unblock` are role-free conductor actions.
+- [x] **D1** Review and done moved to QA (`build.review`, `build.done` prefixes); the audit action override is gone.
+- [x] **D2** A role switch is persisted as `workstream.role_override` with a `role` verb and a logged reason; `--role` stays a one-read view; resume, resize, and done clear it.
+- [x] **D3** `close.mark_done` and `<phase>.unblock` are role-free conductor actions (`role_free: true`, `role: null`).
 
 ### Phase 1 — runtime
 
-- [ ] **A1** `summary` emits `current_role`/`role_source` with no active workstream; paused/closed tests added.
-- [ ] **A2** Role resolves from `workstream.current_phase`; the stored phase is not rewritten in the response.
-- [ ] **A3** Role selection persists across commands and is logged (per D2).
-- [ ] **A4** Role config loads lazily; a broken TOML fails only `summary`, never `detect`/`init`/`validate`/`--help`.
-- [ ] **A5** An unowned action or unmapped phase fails with JSON naming it.
-- [ ] **E1** Role config validates types, role names, and phases consistency; `[advisory]` and `roles.*.phases` are used or deleted.
-- [ ] **E2** `--role` lowercases and returns JSON on an invalid value.
-- [ ] **E3** Headless defines `blocked` for `role_allowed: false`.
-- [ ] **E4** `phases[]` and `workstreams_detail` carry `role`.
-- [ ] **E5** The handoff payload drops or implements `--action`; `verify-return` checks role/action.
-- [ ] **E6** Per-ticket recovery uses the `ticket` command; `unknown gate` names valid ids.
-- [ ] **E7** Skill-less conductor actions are role-free (per D3).
+- [x] **A1** `summary` emits `current_role`/`role_source` with no active workstream (paused and closed), resolved from the last workstream's stored phase; `pm`/`default` is reachable on an empty ledger.
+- [x] **A2** The role resolves from `workstream.current_phase`; `summary.workstream.current_phase` is no longer rewritten to the recommended phase.
+- [x] **A3** `role --role <role> --reason` persists and logs; `role --clear` removes it; resume, resize, and done clear it.
+- [x] **A4** Role config loads lazily in `summary` (and the role/gate-write paths), never in `build_parser`; a malformed TOML fails with JSON while `detect`, `init`, `validate`, and `--help` still work.
+- [x] **A5** An unowned action or unmapped phase fails with `ok:false` naming it; no `pm` default for a mapped phase.
+- [x] **E1** `validate_role_config` checks types, role names, phase/track mappings, and advisory prefix; `roles.*.phases` was removed from the config and is rejected if reintroduced.
+- [x] **E2** `--role` is lowercased; an invalid value returns JSON instead of an exit-2 usage error.
+- [x] **E3** `headless.md` defines `blocked` for a role mismatch, with `blocked_by` naming the action.
+- [x] **E4** `phases[]` and `workstreams_detail` carry `role`; `menu.md` reads `phases[].role` for the `⇄` marker.
+- [x] **E5** The handoff brief no longer passes `--action`; `verify-return` takes `--expect-role`/`--expect-action`.
+- [x] **E6** Per-ticket recovery uses `ticket --id … --gate … --status blocked`; unknown ticket gates name the valid ids.
+- [x] **E7** Conductor-only actions are role-free and never force a handoff.
 
 ### Phase 2 — ownership and handoff documents
 
-- [ ] **A6** Review and done ownership match the Phase 0 decision in config, overlays, and `phase-map.md`.
-- [ ] **A7** The transition table gains PM→QA and QA→DEV; PM→DEV is qualified to skipped-solution tracks; overlays point at one table.
-- [ ] **A8** The handoff trigger is `role_allowed: false`; DEV→QA fires on phase completion.
-- [ ] **A9** One blocked-handoff shape with a typed `blocked_by` array.
-- [ ] **A10** Gate writes and accepted returns record and verify the acting role.
+- [x] **A6** Config, `phase-map.md`, and the overlays give review and done to QA; the DEV overlay says DEV never self-approves.
+- [x] **A7** One transition table in `handoff-protocol.md` with PM→QA, QA→DEV, qualified PM→DEV, rollbacks, and within-role advances; overlays link to it.
+- [x] **A8** The trigger is `next_action.role_allowed: false`; DEV→QA fires on `phases.build` done, not on a passed gate.
+- [x] **A9** One blocked-handoff shape in `handoff-protocol.md` (ordered `blocked_by`, `pointer`, retained `next_action`); the QA overlay links to it.
+- [x] **A10** The return contract carries `role` and `action`; `verify-return` checks them; gate writes log the acting role (`--as`, default `current_role`) and a foreign role needs `--reason`.
 
 ### Phase 3 — verification
 
-- [ ] **V1** `role-explicit-qa` stages plan skills and fails a role-blind run; a control run without `Role:` reaches `frame.spec`.
-- [ ] **V2** Role tests derive the action set from the script and import the resolver; `--model` is explicit.
-- [ ] **V3** `DEFAULT_ROLE_CONFIG` is asserted equal to `role-config.toml`, or removed.
-- [ ] **V4** An interactive menu case covers role filtering; `Role: <role>` is documented or the case input changes.
+- [x] **V1** `role-explicit-qa` stages the plan skills, so a role-blind run reports `ready` and fails; the correct run is `blocked` naming qa and pm. `role-control-pm` is the no-`Role:` control that reaches `frame.spec`.
+- [x] **V2** Role tests import `role_for_action`/`role_is_free`/`assert_phase_mapped`, derive the action set from `ALL_ACTION_IDS`, pass `--model v6`, and cover the optional `role_allowed` case.
+- [x] **A11** `owner()` is gone; the suite asserts QA owns `build.review`/`build.done` through the imported resolver.
+- [x] **V3** `test_default_config_matches_the_toml` pins `DEFAULT_ROLE_CONFIG` to `role-config.toml`.
+- [x] **V4** `role-qa-menu` stages the verify-phase fixture and asserts verify.trace is offered, DEV-only build actions are hidden, and Build is marked `⇄`; `Role: <role>` is documented as an accepted input form.
 - [ ] Re-run quality plus baseline after Phases 1–2; grade every transcript per `evals/README.md`.
 
 ### Phase 4 — structure and hygiene
 
-- [ ] **S1** Collapse the action/gate/handoff duplication to one table each with a `Role` column and links.
-- [ ] **S2** Update the design-doc header for D27 and D5; move the trigger caveat; fix the duplicate and missing rubric lines.
+- [x] **S1** Collapsed the duplication: base phase tables carry a `Role` column, the overlays keep only role deltas and links, one gate table and one transition table remain.
+- [x] **S2** Recorded D27/D28 in the design-doc header and reconciled D5; moved the trigger caveat above its command; dropped the duplicate `continue-with-ledger` assertion; added the path-scope line to the role case.
+
+### Verification after the fixes
+
+- **276/276** unittest cases pass (253 helper + 23 role).
+- `package.sh --check` is in sync; `quick_validate`, `prepass-workflow-integrity`, `scan-path-standards`, `scan-scripts`, and `prepass-prompt-metrics` are clean.
+- Focused role eval run `~/bmad-evals/bmad-sdlc-r11-roles/20261124-171044-r11-roles`: 3/3 cases executed, **24/24 expectations** graded pass beside each transcript (`role-explicit-qa`, `role-control-pm`, `role-qa-menu`).
+- The full quality + baseline re-run (finding 16) is still open; the earlier 12/12 run predates these fixes.

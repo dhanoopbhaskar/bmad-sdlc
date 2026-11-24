@@ -22,25 +22,25 @@ When no ledger exists, do not render the phase menu. Show the short status (no l
 bmad-sdlc — <project>
 Model: v6 (bmad-help) · Role: PM (phase) · Active: ws-001 <name> · Track: feature · Size: epic
 
-Phase      Status    Gate          Open
-Plan       active    required      <n required>, <n conditional>
-Solution   pending   conditional   <n conditional>
-Build      pending   required      <n required>, <n conditional>
-Verify     pending   required      <n required>, <n conditional>
-Close      pending   optional      <n optional>
+Phase      Role   Status    Gate          Open
+Plan       PM     active    required      <n required>, <n conditional>
+Solution   QA     pending   conditional   <n conditional>
+Build      DEV    pending   required      <n required>, <n conditional>
+Verify     QA     pending   required      <n required>, <n conditional>
+Close      QA     pending   optional      <n optional>
 
 Next recommended: plan.stories — break the spec into epics and stories
                   (pm · bmad-create-epics-and-stories)
 ```
 
-Show `optional_actions` separately; they are offered, never required. `close.mark_done` appears as the next action once every required/conditional gate is decided and no gate at any level is blocked.
+Show `optional_actions` separately; they are offered, never required. `close.mark_done` appears as the next action once every required/conditional gate is decided and no gate at any level is blocked; it is role-free, so any role may close.
 
-If there are multiple workstreams, add one line per workstream below the active one, using `summary.workstreams_detail` (id, name, track, size, status, next action):
+If there are multiple workstreams, add one line per workstream below the active one, using `summary.workstreams_detail` (id, name, track, size, status, role, next action):
 
 ```text
 Other workstreams:
-ws-002 <name> (paused, feature, epic)
-ws-003 <name> (done, fix)
+ws-002 <name> (paused, feature, epic, pm)
+ws-003 <name> (done, fix, qa)
 ```
 
 ## Phase menu
@@ -58,11 +58,11 @@ Choose a phase:
   q. Quit
 ```
 
-Mark the current phase with `→`. Mark locked phases with `·` and the missing required gate. Mark a phase outside `current_role` with `⇄`; selecting it offers a handoff or role switch.
+Mark the current phase with `→`. Mark locked phases with `·` and the missing required gate. Mark a phase whose `phases[].role` is not `current_role` with `⇄`; selecting it offers a handoff or the `role` verb, and never runs a foreign action.
 
 ## Action menu
 
-After a phase is chosen, show its actions. List only actions whose `role` field equals `current_role`, plus advisory actions. Show the role, skill, and gate state. The headless block is where the full summary lists stay verbatim.
+After a phase is chosen, show its actions. List every action whose `role` equals `current_role`, plus every `role_free` action (`advisory.*`, `close.mark_done`, `<phase>.unblock`). Show the role, skill, and gate state. The headless block is where the full summary lists stay verbatim.
 
 ```text
 Plan — choose an action (PM):
@@ -97,7 +97,8 @@ Natural language works, but these verbs are stable:
 | `revise` | Return to the last action with new direction. |
 | `review` | Run `bmad-review` on the current artifact. |
 | `switch <workstream>` | Change the active workstream; the previous active one is paused. |
-| `resize <track> <size>` | Change track or size; recomputes every level and phase gate. |
+| `role <pm\|dev\|qa> <reason>` | Persist this workstream's role (`role_override`) with a logged reason; the next `summary` reports `role_source: override`. `role --clear` returns to phase detection. |
+| `resize <track> <size>` | Change track or size; recomputes every level and phase gate; clears `role_override`. |
 | `pause` / `resume <workstream>` | Change workstream status; resume needs the id because pause clears `active_workstream`. |
 | `done` | Mark the workstream done once every required/conditional gate is decided and no gate is blocked. |
 | `reopen <gate> <reason>` | Return a decided gate to `open`; requires a reason. If the gate's phase or workstream is `done`, reopen that first. |
@@ -108,7 +109,7 @@ If the user types a skill name directly (e.g., `bmad-prd`), treat it as `run pla
 
 ## Status view
 
-`status` shows the dashboard rows, then per workstream: artifact paths, every gate with its level, status, and `decided_at`, ticket gate state, decisions, and overrides with reasons. Show `blocked` gates with the missing path, and show `reconcile`'s `missing_evidence`, `phases_to_block`, and `ambiguous_pointers` (several files match one artifact key). A `<phase>.unblock` next action means that phase is blocked with no gate left to show: resolve the blocker, then clear the phase with `set --workstream <id> --path phases.<phase>.status --value active --reason <why>`. Finish or block any other active phase first; only one phase may be active. Read ticket status from `sprint-status.yaml` or `tickets.toml` every time. If the read fails, say so and show the last known state; do not invent.
+`status` shows the dashboard rows, then per workstream: `current_role` with `role_source` (and any `role_override`), artifact paths, every gate with its level, status, and `decided_at`, ticket gate state, decisions, and overrides with reasons. Show `blocked` gates with the missing path, and show `reconcile`'s `missing_evidence`, `phases_to_block`, and `ambiguous_pointers` (several files match one artifact key). A `<phase>.unblock` next action means that phase is blocked with no gate left to show: resolve the blocker, then clear the phase with `set --workstream <id> --path phases.<phase>.status --value active --reason <why>`. Finish or block any other active phase first; only one phase may be active. Read ticket status from `sprint-status.yaml` or `tickets.toml` every time. If the read fails, say so and show the last known state; do not invent.
 
 ## After an action
 

@@ -1,6 +1,6 @@
 # bmad-sdlc — Design and Build Plan
 
-**Status:** built. Design agreed 2026-11-12; D26 added 2026-11-16.
+**Status:** built. Design agreed 2026-11-12; D26 added 2026-11-16; D27 and D28 added 2026-11-24.
 **Created:** 2026-11-12
 **Purpose:** a single front-door skill that conducts the whole BMAD SDLC across product, design, architecture, development, testing, and close-out, with a plan that survives session restarts. The build checklist, builder gate results, and review-fix detail live in `docs/bmad-sdlc-build.memlog.md`; this document keeps the decisions, architecture, acceptance criteria, and risks.
 
@@ -33,7 +33,7 @@ One skill, `bmad-sdlc`, that the user invokes for the entire lifecycle. It:
 
 ## 4. Decision log
 
-D1–D25 were decided with the user on 2026-11-12; D26 was added on 2026-11-16. Each is binding for this build unless explicitly reopened.
+D1–D25 were decided with the user on 2026-11-12; D26 was added on 2026-11-16; D27 and D28 were added on 2026-11-24. Each is binding for this build unless explicitly reopened.
 
 | # | Decision | Choice |
 |---|---|---|
@@ -41,7 +41,7 @@ D1–D25 were decided with the user on 2026-11-12; D26 was added on 2026-11-16. 
 | D2 | Scope | **Adaptive full SDLC.** Tracks: greenfield, feature, fix, audit. |
 | D3 | State model | **Thin ledger + artifacts.** Ledger stores position, decisions, gates, pointers. Artifacts are truth. |
 | D4 | Gate policy | **Enforce required gates, allow override.** Override is logged with a reason. |
-| D5 | Role presentation | **Neutral conductor + role labels.** One voice; each action names its owning role. |
+| D5 | Role presentation | **Neutral conductor + role labels.** One skill and one voice; each action names its owning role. D27's three conductor roles filter that same menu, so the voice stays neutral. |
 | D6 | Packaging | **Both.** Local skill now, reusable module packaging after. |
 | D7 | Handoff | **Fresh subagent per skill** where available; inline and user-run fallbacks. |
 | D8 | Ledger granularity | **Per product, multi-workstream.** One file with many initiatives/workstreams. |
@@ -62,6 +62,7 @@ D1–D25 were decided with the user on 2026-11-12; D26 was added on 2026-11-16. 
 | D25 | Module and concurrency | **Module ships as `skills/bmad-sdlc-module/` with `module-help.csv`; the ledger supports one active workstream at a time.** |
 | D26 | `bmad-loop` mapping (2026-11-16 review) | **Never name it as a skill.** `bmad-loop` is an orchestrator package, not an installed skill; `build.loop` resolves to `bmad-build-auto` and is offered only for batches the user asks for. |
 | D27 | Role split (2026-11-24) | **Three conductor roles: PM, DEV, QA.** `references/role-config.toml` is the single source of ownership (prefixes, phase mapping, track override for `audit`); `summary` reports `current_role`, `role_source`, and per-action `role`/`role_allowed`. Persona labels stay in `phase-map.md` for the skill each action calls; the conductor role decides who may run it. |
+| D28 | Role decisions (2026-11-24 round 11) | **D1:** QA owns `build.review` and `build.done`; DEV builds, QA reviews and approves done, and the audit action override is redundant. **D2:** the role is persisted per workstream as `role_override`, written by the `role` verb with a logged reason; `--role` is a per-read view; `resume`, `resize`, and `done` clear the override. **D3:** conductor-only actions (`close.mark_done`, `<phase>.unblock`) are role-free and open to every role, so no role is named as closer. |
 
 D13 merged into D2; D21 merged into D9.
 
@@ -71,7 +72,7 @@ From `docs.bmad-method.org` (current) and the installed v6.12.4 skills:
 
 - The delivery loop is **Clarify → Plan → Build and verify → Learn and adjust**. Every path runs the same loop; bigger work enters earlier.
 - Four right-sized paths: **trivial** (edit → verify), **one-session** (intent → Build), **epic** (spec → stories → Build × stories → integrate → retro), **project** (shared contracts → epics repeated → integrated product).
-- **Personas advance different units.** This is the key correction to a naive "story is the unit" design. The conductor does **not** force one unit: it tracks the artifact each persona owns and advances the smallest unit that persona owns. The persona labels, the skill each maps to, and what each owns are listed once in `references/phase-map.md` §Role labels. The conductor-role split (PM/DEV/QA) and its resolution order live in `references/role-config.toml` (D27).
+- **Personas advance different units.** This is the key correction to a naive "story is the unit" design. The conductor does **not** force one unit: it tracks the artifact each persona owns and advances the smallest unit that persona owns. The persona labels, the skill each maps to, and what each owns are listed once in `references/phase-map.md` §Role labels. The conductor-role split (PM/DEV/QA), its resolution order, and the persisted role decision live in `references/role-config.toml` (D27, D28).
 - Current model: `bmad` hub; `bmad-agent-po` (Sofia) owns the ticket tree (`tickets.toml`, `R<n>` requirements); `bmad-build` builds one ticket per session and leaves status at `built`; the human or orchestrator marks it `done`; `bmad-retrospective` closes an epic.
 - Installed v6.12.4 model: `bmad-help` hub; `bmad-create-epics-and-stories`; `bmad-sprint-planning` writes `sprint-status.yaml`; `bmad-build` syncs sprint status. In the v6 model, the Product Owner role is split across `bmad-create-epics-and-stories` (epics/stories) and `bmad-sprint-planning` (tracking).
 

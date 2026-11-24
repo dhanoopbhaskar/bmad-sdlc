@@ -6,29 +6,29 @@
 # prose; point at this file instead.
 #
 # Ownership resolution for an action id, in order:
-#   1. [track_action_overrides] key "<track>.<action>" (e.g. an audit review)
+#   1. [track_action_overrides] key "<track>.<action>"
 #   2. [roles.*] action_prefixes, longest prefix wins
-#   3. no match -> unknown action (report an error; never guess)
+#   3. no match -> unknown action (the helper fails; it never guesses)
 #
-# `phases` lists the phases a role works in. Phase-to-role detection uses
-# [phase_roles] first and [track_roles] before that.
+# Phase-to-role detection uses [track_roles] first and [phase_roles] after that.
+# Role-free actions (advisory.*, close.mark_done, <phase>.unblock) are open to
+# every role and need no owner here.
 
 [roles.pm]
 name = "Product Manager"
 action_prefixes = ["frame.", "plan."]
-phases = ["plan"]
 references = ["references/pm/"]
 
 [roles.dev]
 name = "Developer"
 action_prefixes = ["build."]
-phases = ["build"]
 references = ["references/dev/"]
 
+# QA owns the review and done transitions as well as the solution, verify, and
+# close phases: the same role must not build, review, and approve its own work.
 [roles.qa]
 name = "Quality"
-action_prefixes = ["solution.", "verify.", "close."]
-phases = ["solution", "verify", "close"]
+action_prefixes = ["build.review", "build.done", "solution.", "verify.", "close."]
 references = ["references/qa/"]
 
 # Phase-to-role mapping for auto-detection.
@@ -44,10 +44,9 @@ close = "qa"
 [track_roles]
 audit = "qa"
 
-# The audit's review gate reuses the `build.review` action id, so the track
-# override is what keeps it with QA instead of DEV.
+# A track-specific action owner. Empty by default: QA's longest prefix already
+# owns build.review on every track, including an audit.
 [track_action_overrides]
-"audit.build.review" = "qa"
 
 # Advisory actions are offered to whichever role is active.
 [advisory]

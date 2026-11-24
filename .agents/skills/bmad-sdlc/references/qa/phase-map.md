@@ -1,51 +1,20 @@
 # QA Phase Map (Role Overlay)
 
-This overlay file provides QA-role-specific actions and gates. Load after the base phase-map.md.
+Role delta for the Quality role. The base `phase-map.md` action tables carry the `Role` column and `role-config.toml` owns the mapping; this file adds only QA's checks and handoff.
 
-## QA Actions
+## QA scope
 
-These are the actions owned by the Quality role:
+`solution.*`, `verify.*`, `close.*`, plus `build.review` and `build.done` on every track. QA reviews the feature change and approves the done transition, so the role that built a ticket does not also close it. `close.mark_done` is role-free.
 
-| Action id | Role | v6 skill | Current-model skill | Gate |
-|---|---|---|---|---|
-| `solution.test_design` | qa | `bmad-testarch-test-design` | `bmad-tea` | `solution.test_design` |
-| `solution.framework` | qa | `bmad-testarch-framework` | `bmad-tea` | `solution.framework` |
-| `solution.ci` | qa | `bmad-testarch-ci` | `bmad-tea` | `solution.ci` |
-| `verify.e2e` | qa | `bmad-qa-generate-e2e-tests` | `bmad-qa-generate-e2e-tests` | — |
-| `verify.automate` | qa | `bmad-testarch-automate` | `bmad-tea` | — |
-| `verify.test_review` | qa | `bmad-testarch-test-review` | `bmad-tea` | `verify.test_review` |
-| `verify.nfr` | qa | `bmad-testarch-nfr` | `bmad-tea` | `verify.nfr` |
-| `verify.trace` | qa | `bmad-testarch-trace` | `bmad-tea` | `verify.trace` |
-| `close.walkthrough` | qa | `bmad-walkthrough` | `bmad-walkthrough` | `close.walkthrough` |
-| `close.retro` | qa | `bmad-retrospective` | `bmad-retrospective` | `close.retro` |
-| `close.correct_course` | qa | `bmad-correct-course` | `bmad-agent-po` (replan) | — |
-| `close.mark_done` | qa | `sdlc_plan.py done`, or user | same | — |
+## QA checks
 
-## QA Gate Deltas
+- `solution.*`: test design ranks risks and names levels, environments, and coverage targets; the framework scaffold runs a smoke test; CI runs the tests and fails on failure. Skip with a reason when the project already has a mature stack, and record it in `phases.solution.note`.
+- `build.review`: findings are triaged, in-scope issues are fixed, and deferred issues are recorded. Record which review satisfied the gate.
+- `build.done`: evidence is recorded and the human approved the transition.
+- `verify.trace`: every requirement or ticket maps to a test or an explicit gap; the gate is PASS or CONCERNS with named gaps. `verify.nfr` and `verify.test_review` are conditional where the base table says so.
 
-QA-specific gate considerations:
+Gate levels, evidence, and override effects: base `gate-matrix.md` §Gate table and §Override rules. The Solution phase walkthrough is in `qa/solution-phase.md`.
 
-- `solution.test_design`: Conditional for epic/project. Test design document must have ranked risks, test levels/environments, and coverage targets.
-- `solution.framework`: Conditional for epic/project. Framework scaffold must run smoke test.
-- `solution.ci`: Conditional for epic/project. CI config must run tests and fail on failure.
-- `verify.e2e`: Generate automated e2e tests for implemented features.
-- `verify.automate`: Expand test automation coverage for codebase.
-- `verify.test_review`: Conditional for epic/project/audit. Test review report must assess coverage, isolation, determinism.
-- `verify.nfr`: Conditional for epic/project/audit. NFR evidence for performance, security, reliability.
-- `verify.trace`: Required for epic/project/audit; conditional for one-session/fix; optional for trivial. `summary` resolves the level. Traceability matrix + gate decision. Every requirement/ticket maps to test or explicit gap; gate PASS or CONCERNS with named gaps.
-- `close.retro`: Optional (recommended per epic). Retro document + verdict with cited evidence, action items with owners, verdict accept/reject.
-- `close.walkthrough`: Optional. Walkthrough document with purpose, hot spots, and how to test.
-- `close.correct_course`: Sprint change proposal across PRD, epics, architecture, UX.
-- `close.mark_done`: Close workstream when all phases complete.
+## Handoff
 
-## Handoff Points
-
-Role follows the phase: reopen the target phase (or mark the gate `blocked` with a reason) and re-run `summary`; the new `current_role` decides who may act.
-
-QA transitions to PM when:
-- `close.correct_course` triggers a replan (reopen `plan`)
-- A new epic needs planning
-
-QA transitions to DEV when:
-- `verify.trace` finds gaps requiring build fixes (reopen `build`)
-- NFR failures require code changes (reopen `build`)
+`handoff-protocol.md` §Role Transitions is the only transition table, and §Headless JSON is the only blocked-handoff shape. QA hands to DEV when solution completes or when `verify.trace`/`verify.nfr` finds gaps that need code changes, and to PM when `close.correct_course` starts a replan. Within QA the phase advances `solution → verify → close` without a handoff.

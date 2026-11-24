@@ -47,7 +47,7 @@ When two sizes both fit, choose the smaller and promote later. The user can resi
 
 ## Role labels
 
-This table names each persona and what the role owns. These labels are the voice the skill uses; which conductor role (PM, DEV, QA) may run the action is resolved from the action id by `role-config.toml`.
+This table names each persona and what the role owns. These labels are the voice the skill uses; which conductor role (PM, DEV, QA) may run the action is resolved from the action id by `role-config.toml` and shown in each action table's `Role` column. The `Role` column is a view of that file, not a second source: on disagreement, `role-config.toml` wins.
 
 | Label | Persona | Owns |
 |---|---|---|
@@ -64,19 +64,19 @@ This table names each persona and what the role owns. These labels are the voice
 
 Frame the intent, then define and divide the work. Actions are independent tools, not a mandatory sequence; pick what the gap calls for.
 
-| Action id | Persona | v6 skill | Current-model skill | Gate |
-|---|---|---|---|---|
-| `frame.brainstorm` | analyst | `bmad-brainstorming` | `bmad-brainstorming` | — |
-| `frame.forge` | analyst | `bmad-forge-idea` | `bmad-forge-idea` | — |
-| `frame.research` | analyst | `bmad-deep-recon` | `bmad-deep-recon` | — |
-| `frame.brief` | analyst | `bmad-product-brief` or `bmad-agent-analyst` | `bmad-agent-analyst` | — |
-| `frame.prfaq` | analyst | `bmad-prfaq` or `bmad-agent-analyst` | `bmad-agent-analyst` | — |
-| `frame.spec` | analyst | `bmad-spec` | `bmad-spec` or `bmad-agent-po` | `plan.requirements` |
-| `plan.prd` | product-manager | `bmad-prd` or `bmad-agent-pm` | `bmad-agent-pm` | `plan.requirements` |
-| `plan.ux` | ux-designer | `bmad-ux` | `bmad-ux` | `plan.ux` |
-| `plan.architecture` | architect | `bmad-architecture` | `bmad-architecture` | `plan.architecture` |
-| `plan.stories` | product-owner | `bmad-create-epics-and-stories` | `bmad-agent-po` (slice/refine/incept) | `plan.stories` |
-| `plan.sprint` | product-owner | `bmad-sprint-planning` | `bmad-agent-po` (tickets.toml is the plan) | `plan.sprint` |
+| Action id | Role | Persona | v6 skill | Current-model skill | Gate |
+|---|---|---|---|---|---|
+| `frame.brainstorm` | pm | analyst | `bmad-brainstorming` | `bmad-brainstorming` | — |
+| `frame.forge` | pm | analyst | `bmad-forge-idea` | `bmad-forge-idea` | — |
+| `frame.research` | pm | analyst | `bmad-deep-recon` | `bmad-deep-recon` | — |
+| `frame.brief` | pm | analyst | `bmad-product-brief` or `bmad-agent-analyst` | `bmad-agent-analyst` | — |
+| `frame.prfaq` | pm | analyst | `bmad-prfaq` or `bmad-agent-analyst` | `bmad-agent-analyst` | — |
+| `frame.spec` | pm | analyst | `bmad-spec` | `bmad-spec` or `bmad-agent-po` | `plan.requirements` |
+| `plan.prd` | pm | product-manager | `bmad-prd` or `bmad-agent-pm` | `bmad-agent-pm` | `plan.requirements` |
+| `plan.ux` | pm | ux-designer | `bmad-ux` | `bmad-ux` | `plan.ux` |
+| `plan.architecture` | pm | architect | `bmad-architecture` | `bmad-architecture` | `plan.architecture` |
+| `plan.stories` | pm | product-owner | `bmad-create-epics-and-stories` | `bmad-agent-po` (slice/refine/incept) | `plan.stories` |
+| `plan.sprint` | pm | product-owner | `bmad-sprint-planning` | `bmad-agent-po` (tickets.toml is the plan) | `plan.sprint` |
 
 Notes:
 
@@ -90,11 +90,11 @@ Notes:
 
 Decide how the work will be verified before building. The phase gates are conditional by default; their conditions and resolved levels are in `gate-matrix.md`.
 
-| Action id | Persona | v6 skill | Current-model skill | Gate |
-|---|---|---|---|---|
-| `solution.test_design` | test-architect | `bmad-testarch-test-design` | `bmad-tea` | `solution.test_design` |
-| `solution.framework` | test-architect | `bmad-testarch-framework` | `bmad-tea` | `solution.framework` |
-| `solution.ci` | test-architect | `bmad-testarch-ci` | `bmad-tea` | `solution.ci` |
+| Action id | Role | Persona | v6 skill | Current-model skill | Gate |
+|---|---|---|---|---|---|
+| `solution.test_design` | qa | test-architect | `bmad-testarch-test-design` | `bmad-tea` | `solution.test_design` |
+| `solution.framework` | qa | test-architect | `bmad-testarch-framework` | `bmad-tea` | `solution.framework` |
+| `solution.ci` | qa | test-architect | `bmad-testarch-ci` | `bmad-tea` | `solution.ci` |
 
 If the project already has a mature test stack and CI, decide the solution gates `skipped` with a reason, record it in `phases.solution.note`, and only then mark the phase `skipped`. Do not skip silently.
 
@@ -102,15 +102,15 @@ If the project already has a mature test stack and CI, decide the solution gates
 
 The unit is **one ticket per Build session**. The conductor picks ready tickets from the BMAD artifacts; it does not invent them.
 
-| Action id | Persona | v6 skill | Current-model skill | Gate |
-|---|---|---|---|---|
-| `build.atdd` | test-architect | `bmad-testarch-atdd` | `bmad-tea` | — |
-| `build.ticket` | developer | `bmad-build` | `bmad-build` | `build.ticket` |
-| `build.auto` | developer | `bmad-build-auto` | `bmad-build-auto` | `build.ticket` |
-| `build.loop` | developer | `bmad-build-auto` | `bmad-build-auto` | `build.ticket` |
-| `build.tests` | developer | project test runner or `bmad-build` | same | `build.tests` |
-| `build.review` | quality | `bmad-code-review` or `bmad-build`'s built-in review | same | `build.review` |
-| `build.done` | product-owner | `bmad-sprint-planning` status update, or user | `bmad-agent-po` ("mark story done") | `build.done` |
+| Action id | Role | Persona | v6 skill | Current-model skill | Gate |
+|---|---|---|---|---|---|
+| `build.atdd` | dev | test-architect | `bmad-testarch-atdd` | `bmad-tea` | — |
+| `build.ticket` | dev | developer | `bmad-build` | `bmad-build` | `build.ticket` |
+| `build.auto` | dev | developer | `bmad-build-auto` | `bmad-build-auto` | `build.ticket` |
+| `build.loop` | dev | developer | `bmad-build-auto` | `bmad-build-auto` | `build.ticket` |
+| `build.tests` | dev | developer | project test runner or `bmad-build` | same | `build.tests` |
+| `build.review` | qa | quality | `bmad-code-review` or `bmad-build`'s built-in review | same | `build.review` |
+| `build.done` | qa | product-owner | `bmad-sprint-planning` status update, or user | `bmad-agent-po` ("mark story done") | `build.done` |
 
 Ready-ticket sources:
 
@@ -119,28 +119,30 @@ Ready-ticket sources:
 
 `bmad-build` already reviews its own work. `build.review` is satisfied by that built-in review when it ran and its findings were triaged; run `bmad-code-review` as a separate pass when the change is risky, the built-in review was skipped, or the user asks. Record which one satisfied the gate.
 
+`build.review` and `build.done` belong to QA: the DEV session produces the change and its tests, then QA decides the review and the done transition. Build advances to Verify only after QA has decided every ticket's `build.done` and `phases.build` is `done`.
+
 `build.loop` (batches) resolves to `bmad-build-auto`: `bmad-loop` is an orchestrator tool installed as a separate package, not a skill, so never name it as one.
 
 ## Verify phase
 
-| Action id | Persona | v6 skill | Current-model skill | Gate |
-|---|---|---|---|---|
-| `verify.e2e` | test-architect | `bmad-qa-generate-e2e-tests` | `bmad-qa-generate-e2e-tests` | — |
-| `verify.automate` | test-architect | `bmad-testarch-automate` | `bmad-tea` | — |
-| `verify.test_review` | test-architect | `bmad-testarch-test-review` | `bmad-tea` | `verify.test_review` |
-| `verify.nfr` | test-architect | `bmad-testarch-nfr` | `bmad-tea` | `verify.nfr` |
-| `verify.trace` | test-architect | `bmad-testarch-trace` | `bmad-tea` | `verify.trace` |
+| Action id | Role | Persona | v6 skill | Current-model skill | Gate |
+|---|---|---|---|---|---|
+| `verify.e2e` | qa | test-architect | `bmad-qa-generate-e2e-tests` | `bmad-qa-generate-e2e-tests` | — |
+| `verify.automate` | qa | test-architect | `bmad-testarch-automate` | `bmad-tea` | — |
+| `verify.test_review` | qa | test-architect | `bmad-testarch-test-review` | `bmad-tea` | `verify.test_review` |
+| `verify.nfr` | qa | test-architect | `bmad-testarch-nfr` | `bmad-tea` | `verify.nfr` |
+| `verify.trace` | qa | test-architect | `bmad-testarch-trace` | `bmad-tea` | `verify.trace` |
 
 `verify.trace` is the quality gate that matters most for the workstream. The action produces coverage and a gate decision; a failing gate blocks close unless overridden.
 
 ## Close phase
 
-| Action id | Persona | v6 skill | Current-model skill | Gate |
-|---|---|---|---|---|
-| `close.walkthrough` | quality | `bmad-walkthrough` | `bmad-walkthrough` | `close.walkthrough` |
-| `close.retro` | quality | `bmad-retrospective` | `bmad-retrospective` | `close.retro` |
-| `close.correct_course` | product-owner | `bmad-correct-course` | `bmad-agent-po` (replan) | — |
-| `close.mark_done` | product-owner | `sdlc_plan.py done`, or user | same | — |
+| Action id | Role | Persona | v6 skill | Current-model skill | Gate |
+|---|---|---|---|---|---|
+| `close.walkthrough` | qa | quality | `bmad-walkthrough` | `bmad-walkthrough` | `close.walkthrough` |
+| `close.retro` | qa | quality | `bmad-retrospective` | `bmad-retrospective` | `close.retro` |
+| `close.correct_course` | qa | product-owner | `bmad-correct-course` | `bmad-agent-po` (replan) | — |
+| `close.mark_done` | role-free | product-owner | `sdlc_plan.py done`, or user | same | — |
 
 If the workstream has more epics, close the epic and return to `plan.stories` for the next one. Do not end the workstream at the first retro.
 

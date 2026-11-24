@@ -157,7 +157,8 @@ workstreams:
 | `workstreams.<id>.track` | `greenfield`, `feature`, `fix`, or `audit`. Change with `resize`; `set` rejects it. |
 | `workstreams.<id>.size` | `trivial`, `one-session`, `epic`, or `project`. Change with `resize`; `set` rejects it. |
 | `workstreams.<id>.status` | `active`, `paused`, or `done`. Resume with `set --workstream <id> --path status --value active` (with `--reason` when reopening a done workstream); close with `done`, never `set`. |
-| `workstreams.<id>.current_phase` | Derived position, refreshed by mutating commands. |
+| `workstreams.<id>.current_phase` | Derived position, refreshed by mutating commands. `summary` reports it unchanged; the recommended `summary.phase` may be a later phase. |
+| `workstreams.<id>.role_override` | Optional persisted role (`pm`, `dev`, or `qa`). Written by the `role` verb with a logged reason; wins over track and phase detection. Cleared by `resume`, `resize`, and `done`. |
 | `gates.<phase>.<name>.status` | One of `open`, `passed`, `overridden`, `skipped`, `blocked`. `blocked` means the evidence pointer is missing; it is not a pass. |
 | `gates.<phase>.<name>.level` | `required`, `conditional`, or `optional`. **Derived** from track/size/model; the stored value is a cache — `summary` wins (`SKILL.md` §References). `validate` reports drift; `resize` or `migrate` rewrites it. |
 | `tickets.<id>.gates.<gate>.status` | One of `open`, `passed`, `overridden`, `skipped`, `blocked`. Gates are `ticket`, `tests`, `review`, `done`. |
@@ -177,16 +178,17 @@ Every operation prints JSON. Mutating operations are atomic and take a file lock
 | `summary` field | Meaning |
 |---|---|
 | `phase`, `next_phase` | The recommended phase; equals `next_action.phase` when there is one. |
-| `next_action` | `{phase, gate, action, skill, skill_installed?, skill_manifest_only?, ticket?, role, role_allowed, reason, source}` or null when paused/done. `role` is the action's owner from `role-config.toml`; `role_allowed` is false when it differs from `current_role`. `skill_installed` appears only when `summary` is given `--project-root`. When the first-choice skill is absent, `skill` is rewritten to the first installed alternative and `skill_installed` reports whether that one is installed. `skill_manifest_only` is true when the manifest names the chosen skill but no readable `SKILL.md` exists under a skill directory — warn and offer a repair, since the handoff may fail. |
-| `current_role`, `role_source` | The active role and why it was chosen: `explicit` (`--role`), `track`, `phase`, or `default`. |
-| `optional_actions` | Open optional actions the user may take now; each carries `role` and `role_allowed`. |
+| `next_action` | `{phase, gate, action, skill, skill_installed?, skill_manifest_only?, ticket?, role, role_free?, role_allowed, reason, source}` or null when paused/done. `role` is the action's owner from `role-config.toml`; `role_free` is true for `close.mark_done`, `<phase>.unblock`, and `advisory.*`, where `role` is null and every role may act. `role_allowed` is false when an owned action's role differs from `current_role`. `skill_installed` appears only when `summary` is given `--project-root`. When the first-choice skill is absent, `skill` is rewritten to the first installed alternative and `skill_installed` reports whether that one is installed. `skill_manifest_only` is true when the manifest names the chosen skill but no readable `SKILL.md` exists under a skill directory — warn and offer a repair, since the handoff may fail. |
+| `current_role`, `role_source` | The active role and why it was chosen: `explicit` (`--role`), `override` (the persisted `role` verb), `track`, `phase`, or `default`. Both are present even when no workstream is active (paused or closed), resolved from the last workstream's stored phase. |
+| `optional_actions` | Open optional actions the user may take now; each carries `role`, `role_free?`, and `role_allowed`. |
 | `open_gates`, `blocked_gates` | Every live open/blocked gate, per-ticket gates included. A phase marked `done`/`skipped` contributes only the gates that contradict its status; `phases[].open_gates` lists every open gate in that phase, whether or not the phase is `done`/`skipped`. |
 | `required_open`, `conditional_open`, `optional_open` | Lists of gate ids, split by resolved level. A blocked required or conditional gate appears in both its level list and `blocked_gates`; a blocked optional gate appears only in `blocked_gates` but still blocks its phase. Each phase carries the same three lists, scoped to its own gates. |
+| `phases[].role` | The role that owns the phase, from `[phase_roles]` or a `[track_roles]` override. The menu's `⇄` marker reads this field. |
 | `phases[].blocking` | Gate ids that make the phase incomplete. |
 | `locked_phases` | Phases not yet reachable, with the first missing gate. |
 | `phases[].complete` | True when `gate-matrix.md` §Phase completion says the phase is complete. |
 | `tickets` | Per-ticket gate state (`count`, `open`, `blocked`, `required_open`, `conditional_open`, `items`). |
-| `workstreams_detail` | `{id, name, track, size, status, current_phase, next_action}` for every workstream. |
+| `workstreams_detail` | `{id, name, track, size, status, current_phase, role, role_override, next_action}` for every workstream. |
 | `ok` | True on success; a failed command exits non-zero with `ok: false` and `error`. |
 | `ledger`, `memlog` | Resolved ledger and audit-trail paths. |
 | `project`, `model` | Project name and recorded BMAD model. |
@@ -213,7 +215,11 @@ Every operation prints JSON. Mutating operations are atomic and take a file lock
 ... append --plan <ledger> --path decisions --value '{"decision":"...","reason":"..."}'
 
 # ticket: per-ticket gate; use this for ids containing dots
-... ticket --plan <ledger> --id "1.3" --gate review --status passed --evidence <path>
+... ticket --plan <ledger> --id "1.3" --gate review --status passed --evidence <path> --as qa
+
+# role: persist the role for this workstream; not the same as --role on summary
+... role --plan <ledger> --workstream ws-001 --role qa --reason "taking over review"
+... role --plan <ledger> --workstream ws-001 --clear --reason "handoff complete"
 
 # done: close; --accept-missing-evidence/--accept-missing-tickets need --reason
 ... done --plan <ledger> --project-root {project-root}
@@ -226,7 +232,8 @@ Every operation prints JSON. Mutating operations are atomic and take a file lock
 
 # verify-return: pass the pre-handoff hashes; a mismatch rejects the return
 ... verify-return --plan <ledger> --project-root {project-root} --return-file <json> \
-  --expect-ledger-sha <sha256> --expect-memlog-sha <sha256>
+  --expect-ledger-sha <sha256> --expect-memlog-sha <sha256> \
+  --expect-role qa --expect-action build.review
 
 # audit trail and validation
 ... log --plan <ledger> --type event --text "plan.requirements passed"
@@ -236,6 +243,8 @@ Every operation prints JSON. Mutating operations are atomic and take a file lock
 ### set rules
 
 - `set` parses `--value` as JSON when possible, otherwise as a string; `--null` sets null.
+- A gate write records the acting role: `--as <role>` overrides the resolved `current_role`. A role that does not own the gate needs `--reason`; the audit line names the actor. `ticket` takes the same flag.
+- `role_override` is written by the `role` verb, never by `set`.
 - Omitting `--workstream` targets the active workstream for workstream-shaped paths; document paths (`schema`, `bmad.*`, `active_workstream`) stay at the root.
 - Replacing a whole node (`phases.<phase>`, `tickets.<id>`, a gate node, or a ticket gate node) needs `--replace --reason`. A phase replacement needs `status` and `evidence`; the derived `gate` and a gate node's `level` are carried forward.
 - Remove a ticket with `set --path tickets.<id> --delete --reason <why>`; a ticket with a decided gate, or the last ticket of a done build phase, cannot be deleted.

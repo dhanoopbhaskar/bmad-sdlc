@@ -1,43 +1,25 @@
 # DEV Phase Map (Role Overlay)
 
-This overlay file provides DEV-role-specific actions and gates. Load after the base phase-map.md.
+Role delta for the Developer. The base `phase-map.md` action tables carry the `Role` column and `role-config.toml` owns the mapping; this file adds only DEV's per-ticket work and handoff.
 
-## DEV Actions
+## DEV scope
 
-These are the actions owned by the Developer role:
+`build.atdd`, `build.ticket`, `build.auto`, `build.loop`, and `build.tests`. `build.review` and `build.done` belong to QA: DEV builds and tests, QA reviews and approves the done transition.
 
-| Action id | Role | v6 skill | Current-model skill | Gate |
-|---|---|---|---|---|
-| `build.atdd` | dev | `bmad-testarch-atdd` | `bmad-tea` | — |
-| `build.ticket` | dev | `bmad-build` | `bmad-build` | `build.ticket` |
-| `build.auto` | dev | `bmad-build-auto` | `bmad-build-auto` | `build.ticket` |
-| `build.loop` | dev | `bmad-build-auto` | `bmad-build-auto` | `build.ticket` |
-| `build.tests` | dev | project test runner or `bmad-build` | same | `build.tests` |
-| `build.review` | dev | `bmad-code-review` or `bmad-build`'s built-in review | same | `build.review` |
-| `build.done` | dev | `bmad-sprint-planning` status update, or user | `bmad-agent-po` ("mark story done") | `build.done` |
+## Per-ticket gate deltas
 
-## DEV Gate Deltas
+- `build.ticket`: required per ticket. The build plan has Given/When/Then (or equivalent) acceptance criteria, names the files and verification, and has no TBDs.
+- `build.tests`: conditional per ticket, optional for `trivial`/`audit`. New or changed tests pass; no existing test is loosened.
+- `build.review`: QA's gate. DEV supplies the reviewed change; QA records the decision. A built-in `bmad-build` review can satisfy it when its findings were triaged.
+- `build.done`: QA's gate, required after `build.review`, optional for `audit`. DEV never self-approves.
 
-DEV-specific gate considerations:
+Expected output, evidence, and override effects: base `gate-matrix.md` §Gate table and §Override rules.
 
-- `build.ticket`: Required per ticket. Build plan with acceptance criteria must have Given/When/Then or equivalent; plan names files and verification; no TBDs.
-- `build.tests`: Conditional per ticket; optional for `trivial`/`audit`. New/changed tests pass; no existing test is loosened.
-- `build.review`: Required per ticket. Findings are triaged; in-scope issues fixed; deferred issues recorded. `bmad-build` already reviews its own work - this is satisfied by built-in review when it ran and findings were triaged.
-- `build.done`: Required per ticket after `build.review`; optional for `audit`. Approval to mark ticket done; evidence recorded and human approved.
+## Ready-ticket sources
 
-## Ready-Ticket Sources
+- v6: `{implementation_artifacts}/sprint-status.yaml` (`ready-for-dev`, `in-progress`, `review`).
+- Current: the active initiative's `tickets/tickets.toml` and the per-ticket build plan status (`built` → `done`).
 
-- v6: `{implementation_artifacts}/sprint-status.yaml` (`ready-for-dev`, `in-progress`, `review`)
-- Current: active initiative's `tickets/tickets.toml` and per-ticket build plan status (`built` → `done`)
+## Handoff
 
-## Handoff Points
-
-Role follows the phase: reopen `plan` (with a reason) and re-run `summary` when work returns to PM.
-
-DEV transitions to QA when:
-- Every ticket in the current sprint/iteration has `build.done` passed
-- `build.review` is satisfied (built-in or separate review)
-
-DEV transitions back to PM when:
-- Blocked by a missing or incomplete spec: reopen `plan` and record why `plan.requirements` is blocked
-- New requirements need PM clarification
+`handoff-protocol.md` §Role Transitions is the only transition table. DEV hands off to QA when every ticket's `build.done` is decided and `phases.build` is `done`; it hands back to PM when `plan.requirements` is blocked. Rollback uses the `ticket` command for per-ticket gates; DEV never writes a foreign gate without a recorded reason.

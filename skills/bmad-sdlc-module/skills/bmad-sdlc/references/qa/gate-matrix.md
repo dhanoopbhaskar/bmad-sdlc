@@ -1,46 +1,15 @@
 # QA Gate Matrix (Role Overlay)
 
-This overlay provides QA-specific gate considerations. Load after the base gate-matrix.md.
+Role delta for the Quality role. Every gate level, evidence rule, and override effect lives in base `gate-matrix.md`; this file adds QA-specific judgment only.
 
-## QA Gate Considerations
+- `verify.trace`: required where the base table says required. Override only with a documented reason; the gap must be visible in the close summary.
+- `verify.nfr`: conditional. Skip with a reason when no NFR requirements exist.
+- `verify.test_review`: conditional. Skip with a reason when test quality is not in doubt.
+- `build.review` / `build.done`: QA's decisions on every track. `build.done` refuses unless `build.review` passed; an overridden review is not enough.
+- `close.retro` / `close.walkthrough`: optional. Skipping is normal; record `skipped` without a reason.
 
-| Gate id | QA Notes |
-|---|---|
-| `solution.test_design` | Conditional for epic/project. Test design must rank risks, name test levels/environments, and have coverage targets. |
-| `solution.framework` | Conditional for epic/project. Framework scaffold must run smoke test. |
-| `solution.ci` | Conditional for epic/project. CI config must run tests and fail on test failure. |
-| `verify.trace` | Required for epic/project/audit; conditional for one-session/fix; optional for trivial. `summary` resolves the level. Traceability matrix + gate decision. Every requirement/ticket maps to test or explicit gap. Gate is PASS or CONCERNS with named gaps. |
-| `verify.nfr` | Conditional for epic/project/audit. Performance/security/reliability requirements must have evidence or named gaps. |
-| `verify.test_review` | Conditional for epic/project/audit. Coverage, isolation, determinism assessed; blocking issues named. |
-| `close.retro` | Optional (recommended per epic). Retro document + verdict; findings cite evidence; action items have owners; verdict accept/reject. |
-| `close.walkthrough` | Optional. Walkthrough with purpose, hot spots, and how to test. |
+## Blocked and rollback
 
-## QA Override Guidance
+When `verify.trace` is blocked, QA names the missing matrix or evidence and stops. The conductor records the blocked gate and the pointer; the handed-off role never writes the ledger.
 
-- `verify.trace`: Required gate. Override only with documented reason; gap must be visible in close summary.
-- `verify.nfr`: Conditional. Skip with reason if no NFR requirements exist.
-- `verify.test_review`: Conditional. Skip with reason if test quality not in doubt.
-- `close.retro`: Optional. Skipping is normal; record `skipped` without reason.
-- `close.walkthrough`: Optional. Skipping is normal; record `skipped` without reason.
-
-## Blocked Gate Handling
-
-When `verify.trace` is `blocked`:
-
-- Missing traceability matrix or evidence
-- QA reports: "Blocked: waiting for the trace matrix at /path/to/trace.md → `verify.trace` gate not passed"
-- The conductor records the gate with `set --value blocked --reason "<why>"`; QA never writes the ledger
-- No forced revise — wait, switch role, or override with a reason
-
-## Rollback Rules
-
-If QA's entry gate fails:
-
-- The conductor records the source gate as `blocked` with a reason and pointer to the failed artifact, then re-runs `summary`
-- Headless JSON keeps the `summary` shape and adds: `{"status": "blocked", "blocked_by": ["verify.trace"], "pointer": "/path/to/trace.md", "current_role": "qa"}`
-
-## Handoff Rules
-
-- QA → PM: When `close.correct_course` triggers replan or new epic needs planning
-- QA → DEV: When `verify.trace` or `verify.nfr` finds gaps requiring build fixes
-- No session context passed; next role reads only ledger + artifact files
+Rollback keeps the shape in `handoff-protocol.md` §Headless JSON: `status: blocked`, `current_role`, an ordered `blocked_by` array, `pointer`, and the retained `next_action`. Do not add a second blocked shape here. Handoff rules: `handoff-protocol.md` §Role Transitions.

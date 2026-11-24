@@ -36,7 +36,7 @@ Do not skip silently.
 
 ## QA-Specific Gate Criteria
 
-| Gate | Evidence Required | Pass Criteria |
+| Gate | Evidence Required | Pass Criteria (see base `gate-matrix.md`) |
 |---|---|---|
 | `solution.test_design` | Test design document | Risks ranked; test levels/environments named; coverage targets exist |
 | `solution.framework` | Framework scaffold | Project can run framework's smoke test |
@@ -44,7 +44,7 @@ Do not skip silently.
 
 ## Handoff to Build
 
-After Solution phase gates pass, handoff to DEV role:
+After Solution phase gates are decided and `phases.solution` is `done` or `skipped`, follow `handoff-protocol.md` §Role Transitions (QA → DEV):
 - DEV reads test design for ATDD (`build.atdd`)
 - DEV runs tests per ticket (`build.tests`)
 - DEV reads the ledger + artifact files — no session context

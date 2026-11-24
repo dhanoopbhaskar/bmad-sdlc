@@ -31,8 +31,7 @@
       "The staged ledger records no new workstream and no gate advanced to passed or overridden.",
       "The skill writes no project file outside the project root; every file it creates stays under _bmad-output/sdlc/ (harness-created caches are excluded).",
       "The transcript resolves no path outside the case root except the harness-placed skill directory and the system tools it invokes.",
-      "The transcript does not read, list, or grep the skill's `evals/` directory or any `case.json` or `prompt.txt`, and does not modify the skill installation.",
-      "The transcript resolves no path outside the project root except the harness-placed skill directory and the system tools it invokes."
+      "The transcript does not read, list, or grep the skill's `evals/` directory or any `case.json` or `prompt.txt`, and does not modify the skill installation."
     ],
     "state_prefix": "[the project already has _bmad-output/sdlc/plan.yaml with an active workstream and an open required gate; resume it]",
     "files": [
@@ -213,13 +212,65 @@
     "input": "Run headless. Use bmad-sdlc. Role: qa. Workstream: qa-gate. Track: greenfield. Size: epic. Work only in the project root; do not inspect parent directories.",
     "rubric": [
       "The final JSON block includes current_role='qa' and role_source='explicit'.",
+      "The JSON status is blocked, not ready, because next_action.role_allowed is false; blocked_by names the foreign gate or action (plan.requirements or frame.spec).",
       "next_action.action is frame.spec with role='pm' and role_allowed=false.",
-      "The response does not run a PM action: it asks for a handoff or a role switch, or reports status needs_input or blocked, instead of executing frame.spec.",
+      "The response does not run a PM action or write a planning artifact: current_role is qa, the owning role pm is named, and frame.spec is not executed.",
       "The run created `_bmad-output/sdlc/plan.yaml` with track='greenfield' and size='epic'.",
+      "The plan skills are staged, so a role-blind implementation would report status ready for frame.spec; reporting ready is a failure.",
       "The emitted `next_action`, `optional_actions`, `open_gates`, `blocked_gates`, and `locked_phases` are exactly the values in the `summary` output the run captured, and no gate is passed or overridden.",
-      "The transcript does not read, list, or grep the skill's `evals/` directory or any `case.json` or `prompt.txt`, and does not modify the skill installation."
+      "The transcript does not read, list, or grep the skill's `evals/` directory or any `case.json` or `prompt.txt`, and does not modify the skill installation.",
+      "The transcript resolves no path outside the project root except the harness-placed skill directory and the system tools it invokes."
     ],
     "state_prefix": null,
-    "files": []
+    "files": [
+      ".agents/skills/bmad-help/SKILL.md",
+      ".agents/skills/bmad-build/SKILL.md",
+      ".agents/skills/bmad-prd/SKILL.md",
+      ".agents/skills/bmad-create-epics-and-stories/SKILL.md",
+      ".agents/skills/bmad-sprint-planning/SKILL.md",
+      ".agents/skills/bmad-spec/SKILL.md"
+    ]
+  },
+  {
+    "id": "role-control-pm",
+    "input": "Run headless. Use bmad-sdlc. Workstream: control-pm. Track: greenfield. Size: epic. Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The final JSON block reports status='ready', current_role='pm', and role_source='phase'.",
+      "next_action.action is frame.spec with role='pm' and role_allowed=true, and next_action.skill_installed is true.",
+      "The response stops at the plan.requirements gate; it does not run frame.spec, write a spec, or claim planning is complete.",
+      "The run created `_bmad-output/sdlc/plan.yaml` with track='greenfield' and size='epic'.",
+      "The emitted `next_action`, `optional_actions`, `open_gates`, `blocked_gates`, and `locked_phases` are exactly the values in the `summary` output the run captured, and no gate is passed or overridden.",
+      "The transcript does not read, list, or grep the skill's `evals/` directory or any `case.json` or `prompt.txt`, and does not modify the skill installation.",
+      "The transcript resolves no path outside the project root except the harness-placed skill directory and the system tools it invokes."
+    ],
+    "state_prefix": null,
+    "files": [
+      ".agents/skills/bmad-help/SKILL.md",
+      ".agents/skills/bmad-build/SKILL.md",
+      ".agents/skills/bmad-prd/SKILL.md",
+      ".agents/skills/bmad-create-epics-and-stories/SKILL.md",
+      ".agents/skills/bmad-sprint-planning/SKILL.md",
+      ".agents/skills/bmad-spec/SKILL.md"
+    ]
+  },
+  {
+    "id": "role-qa-menu",
+    "input": "Use bmad-sdlc. Role: qa. Workstream: verify-menu. Show the phase and action menu for where we are. Do not run any action. Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The response renders the interactive menu, not a headless JSON-only report.",
+      "The dashboard shows the current role as QA with source 'explicit' from current_role and role_source.",
+      "The Verify action menu offers verify.trace, which QA owns.",
+      "The menu does not offer the DEV-only build actions build.ticket, build.atdd, or build.tests as runnable for QA.",
+      "The phase menu marks Build as cross-role with the ⇄ marker, using phases[].role (build is DEV's).",
+      "The response runs no action and writes no gate; the staged ledger still has verify.trace open and no gate passed or overridden.",
+      "The transcript does not read, list, or grep the skill's `evals/` directory or any `case.json` or `prompt.txt`, and does not modify the skill installation.",
+      "The transcript resolves no path outside the project root except the harness-placed skill directory and the system tools it invokes."
+    ],
+    "state_prefix": null,
+    "files": [
+      "_bmad-output/sdlc/plan.yaml",
+      "_bmad-output/sdlc/.memlog.md",
+      ".agents/skills/bmad-tea/SKILL.md"
+    ]
   }
 ]

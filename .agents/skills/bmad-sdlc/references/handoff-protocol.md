@@ -34,6 +34,7 @@ Workstream: <id> — <name>
 Track: <greenfield|feature|fix|audit>
 Size: <trivial|one-session|epic|project>
 Phase: <plan|solution|build|verify|close>
+Role: <pm|dev|qa>
 Action: <action id, e.g., plan.stories>
 
 Objective:
@@ -64,6 +65,8 @@ Rules:
 Return exactly this JSON:
 {
   "status": "done | blocked | needs_input",
+  "role": "pm | dev | qa",
+  "action": "<action id you ran>",
   "artifacts": [{"path": "...", "kind": "..."}],
   "evidence": ["..."],
   "decisions": [{"decision": "...", "reason": "..."}],
@@ -102,13 +105,14 @@ Do not push or merge. When done, report the plan path, tests run, and review fin
 The conductor accepts a result only when:
 
 - `status` is `done`, and
+- `role` and `action` name the acting role and the action it ran, and match `--expect-role` / `--expect-action` when supplied, and
 - at least one artifact is claimed and exists on disk, is non-empty, and is inside `{project-root}`, and
 - no artifact is the ledger or the audit trail, and
 - the gate criteria are evidenced (not merely asserted): the `evidence` list is present, non-empty, and every entry exists inside `{project-root}`, and
 - `open_questions` is empty, or `verify-return --accept-questions` records them as accepted in the audit trail, and
 - the ledger and audit trail are unchanged: their SHA-256 digests match the pre-handoff values.
 
-Hash both files before spawning the subagent, then pass the digests (SHA-256) to the validator. Use the platform's tool (`shasum -a 256` on macOS, `sha256sum` on Linux). A probe call without the flags reports the `ledger_sha256` / `memlog_sha256` fields, but it is not an acceptance: `verify-return` requires both `--expect-*` flags to accept a return. Its `digest_check` field is `passed`, `failed`, or `not_run`; only `passed` means both digests matched.
+Hash both files before spawning the subagent, then pass the digests (SHA-256) to the validator. Use the platform's tool (`shasum -a 256` on macOS, `sha256sum` on Linux). A probe call without the flags reports the `ledger_sha256` / `memlog_sha256` fields, but it is not an acceptance: `verify-return` requires both `--expect-*` flags to accept a return. Its `digest_check` field is `passed`, `failed`, or `not_run`; only `passed` means both digests matched. Pass `--expect-role <role> --expect-action <action id>` to reject a return from the wrong role or for the wrong action.
 
 ```bash
 ledger_before=$(shasum -a 256 {workflow.ledger_path} | cut -d' ' -f1)
@@ -153,42 +157,50 @@ It does not keep the full text of every artifact in context. Re-read what the ne
 
 ## Artifact-Driven Handoff Protocol (Role-Based)
 
-This section defines the role transition rules for the PM/DEV/QA split.
+This section is the single authority for role transitions and the blocked-handoff shape. The overlays carry role deltas and link here.
 
 ### Handoff Rules
 
-- Handoff triggered **only** when a gate passes and the next action's role differs from `current_role` (`next_action.role_allowed: false`).
-- Next role reads **only** the ledger + artifact files — no session context, no summaries.
-- Subagent receives the §Brief template above plus `Role: <role>` and `--role=<role> --plan=<ledger> --workstream=<id> --action=<action>` — nothing else.
-- Rollback: when the next role's entry gate fails, the **conductor** (never the handed-off role) records it with `set --workstream <id> --path gates.<phase>.<gate>.status --value blocked --reason "<gate> failed: <pointer>"`, then re-runs `summary` to re-resolve the role.
+- Hand off when `next_action.role_allowed` is `false` — a role mismatch — regardless of whether a gate just passed. A blocked foreign gate needs a handoff with no pass at all.
+- The next role reads **only** the ledger and artifact files — no session context, no summaries.
+- The subagent receives the §Brief template plus its `role` and `action` fields. Pass `--role=<role> --plan=<ledger> --workstream=<id>`; there is no `--action` flag.
+- Rollback: when the next role's entry gate fails, the **conductor** (never the handed-off role) records it and re-runs `summary` to re-resolve the role. Use `ticket --id <ticket> --gate <gate> --status blocked --reason "<gate> failed: <pointer>"` for a per-ticket gate, and `set --workstream <id> --path gates.<phase>.<gate>.status --value blocked --reason "<gate> failed: <pointer>"` for a phase gate. Named gates and valid ids: `gate-matrix.md` §Gate table.
 
 ### Role Transitions
 
-| From Role | To Role | Trigger | Condition |
+The trigger is always `next_action.role_allowed: false`; the table explains when that happens. A phase boundary fires when the phase is marked `done` in the ledger, not when a gate is merely passed.
+
+| From | To | Boundary | Condition |
 |---|---|---|---|
-| PM | DEV | plan phase complete | Every required/conditional `plan.*` gate decided; `next_action.phase` is no longer `plan` |
-| DEV | QA | `build.done` | Every ticket in the sprint has `build.done` = `passed` |
-| DEV | PM | `plan.requirements` | `blocked` (waiting for spec) |
-| QA | PM | `close.correct_course` | Triggers replan |
-| QA | DEV | `verify.trace` | Finds gaps requiring build fixes |
-| QA | DEV | `verify.nfr` | Finds NFR failures requiring code changes |
+| PM | QA | plan → solution | Every required/conditional `plan.*` gate is decided and `phases.plan` is `done`; solution is not skipped. |
+| PM | DEV | plan → build | Solution is skipped or optional for the track/size, so the next action is `build.*`. |
+| QA | DEV | solution → build | Every `solution.*` gate is decided and `phases.solution` is `done` or `skipped`. |
+| DEV | QA | build → verify | Every ticket's `build.done` is decided and `phases.build` is `done`. |
+| QA | PM | close → plan | `close.correct_course` triggers a replan, or a new epic needs planning; reopen `plan` with a reason. |
+| QA | DEV | verify → build | `verify.trace` or `verify.nfr` finds gaps or failures that need code changes; reopen `build` with a reason. |
+| DEV | PM | build → plan | Blocked on a missing or incomplete spec: `plan.requirements` is `blocked`; reopen `plan` with a reason. |
+| any | any | rollback | The entry gate fails; the conductor records it blocked and re-runs `summary`. Reopening the target phase is what moves the role back. |
 
-### Headless JSON (Extended)
+Within one role the phase advances without a handoff: `solution → verify → close` is all QA, and one ticket follows another within DEV.
 
-When a role transition happens in headless mode, emit the block defined in `references/headless.md` §Emitted block with the role fields below. This example is abridged; the emitted block keeps every summary list:
+### Headless JSON
+
+When a role mismatch happens in headless mode, emit the block defined in `references/headless.md` §Emitted block with `status: "blocked"` and the role fields below. This example is abridged; the emitted block keeps every summary list:
 
 ```json
 {
-  "status": "ready",
+  "status": "blocked",
   "current_role": "dev",
+  "blocked_by": ["build.review"],
+  "pointer": "/path/to/review.md",
   "next_action": {
     "phase": "build",
-    "gate": "build.ticket",
-    "action": "build.ticket",
-    "role": "dev",
-    "role_allowed": true,
-    "skill": "bmad-build",
-    "reason": "Build the next ready ticket.",
+    "gate": "build.review",
+    "action": "build.review",
+    "role": "qa",
+    "role_allowed": false,
+    "skill": "bmad-code-review",
+    "reason": "build.review is a required open gate.",
     "source": "computed"
   },
   "track": "feature",
@@ -198,7 +210,7 @@ When a role transition happens in headless mode, emit the block defined in `refe
 }
 ```
 
-For a blocked handoff, keep the same shape with `"status": "blocked"` and add `"blocked_by"` and `"pointer"`. **No `next_role` field** — read `next_action.role` (from `role-config.toml`; an audit's `build.review` belongs to QA, not DEV).
+That is the only blocked-handoff shape. `blocked_by` is an ordered array of gate ids, `pointer` names the artifact that unblocks the first one, and `next_action` is retained so the consumer can see the mismatch. **No `next_role` field** — read `next_action.role`. Role mismatch is `status: "blocked"` even when the skill is installed; never emit `ready` for an action `current_role` may not run.
 
 ### Blocked Gate Handling
 
@@ -206,7 +218,7 @@ When a role is blocked by incomplete work from a previous role:
 
 - **DEV says**: "Blocked: waiting for PM to complete the spec at /path/to/SPEC.md → PM: `plan.requirements` gate not passed"
 - The conductor records the blocked gate with the `--reason` above; the handed-off role never writes the ledger.
-- **No forced revise** — wait, switch role, or override with a reason.
+- **No forced revise** — wait, run the `role` verb, or override with a reason.
 - **Ledger gate stays**: `plan.requirements` = `blocked` with the pointer recorded in the audit trail.
 
 ### Subagent Lifecycle
@@ -214,4 +226,4 @@ When a role is blocked by incomplete work from a previous role:
 - Per-action spawn (fresh subagent per action)
 - Role's references loaded (base + role overlay)
 - No session summary passed — only ledger artifacts
-- Subagent returns JSON per §Return contract
+- Subagent returns JSON per §Return contract, including its `role` and `action` fields

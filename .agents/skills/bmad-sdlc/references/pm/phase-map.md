@@ -1,36 +1,21 @@
 # PM Phase Map (Role Overlay)
 
-This overlay file provides PM-role-specific actions and gates. Load after the base phase-map.md.
+Role delta for the Product Manager. The base `phase-map.md` action tables carry the `Role` column and `role-config.toml` owns the mapping; this file adds only what PM must check and where it hands off.
 
-## PM Actions
+## PM scope
 
-These are the actions owned by the Product Manager role:
+`frame.*` and `plan.*` in the Plan phase. `frame.spec` or `plan.prd` satisfies `plan.requirements`; never require both.
 
-| Action id | Role | v6 skill | Current-model skill | Gate |
-|---|---|---|---|---|
-| `frame.brainstorm` | pm | `bmad-brainstorming` | `bmad-brainstorming` | — |
-| `frame.forge` | pm | `bmad-forge-idea` | `bmad-forge-idea` | — |
-| `frame.research` | pm | `bmad-deep-recon` | `bmad-deep-recon` | — |
-| `frame.brief` | pm | `bmad-product-brief` or `bmad-agent-analyst` | `bmad-agent-analyst` | — |
-| `frame.prfaq` | pm | `bmad-prfaq` or `bmad-agent-analyst` | `bmad-agent-analyst` | — |
-| `frame.spec` | pm | `bmad-spec` | `bmad-spec` or `bmad-agent-po` | `plan.requirements` |
-| `plan.prd` | pm | `bmad-prd` or `bmad-agent-pm` | `bmad-agent-pm` | `plan.requirements` |
-| `plan.ux` | pm | `bmad-ux` | `bmad-ux` | `plan.ux` |
-| `plan.architecture` | pm | `bmad-architecture` | `bmad-architecture` | `plan.architecture` |
-| `plan.stories` | pm | `bmad-create-epics-and-stories` | `bmad-agent-po` (slice/refine/incept) | `plan.stories` |
-| `plan.sprint` | pm | `bmad-sprint-planning` | `bmad-agent-po` (tickets.toml is the plan) | `plan.sprint` |
+## PM checks
 
-## PM Gate Deltas
+- `plan.requirements`: the artifact states why, what, constraints, non-goals, and a success signal; open questions are listed.
+- `plan.stories`: stories/tickets are ordered, each has a deliverable and a verification, and dependencies are named. A fix may satisfy this with one ticket or a direct build intent.
+- `plan.sprint` (v6): `sprint-status.yaml` is valid and every story has a legal status. In the current model, Sofia's ticket tree is the plan.
+- `plan.ux`: skip with a reason when UI is not material; otherwise `DESIGN.md` and `EXPERIENCE.md` must both exist.
+- `plan.architecture`: skip with a reason unless 2+ units must adopt a decision; otherwise the decisions and trade-offs are recorded with no unresolved contradiction.
 
-PM-specific gate considerations:
+Gate levels and override effects: base `gate-matrix.md` §Gate table and §Override rules.
 
-- `plan.requirements`: Satisfied by `frame.spec` or `plan.prd`. PM should verify the artifact exists and is complete.
-- `plan.ux`: Conditional for a product with a UI; skip with a reason when UI is not material.
-- `plan.architecture`: Conditional when 2+ units must adopt a decision; skip with a reason otherwise.
-- `plan.stories`: Required for epic/project tracks. PM ensures stories are ordered with deliverables and verification.
-- `plan.sprint`: Required for v6 model. PM ensures valid sprint-status.yaml with proper story statuses.
+## Handoff
 
-## Handoff Points
-
-PM transitions to DEV when:
-- Every required/conditional `plan.*` gate is decided and `summary` reports a non-plan `next_action` (`next_action.role_allowed: false` with role `dev`)
+Follow `handoff-protocol.md` §Role Transitions. PM hands off when the next action is no longer PM's: to QA at plan → solution, or to DEV at plan → build when solution is skipped or optional for the track and size. A phase boundary fires when `phases.plan` is marked `done`, not when the last gate is merely passed.

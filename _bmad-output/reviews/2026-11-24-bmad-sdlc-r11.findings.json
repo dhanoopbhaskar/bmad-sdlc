@@ -205,5 +205,14 @@
     "guard_snippet": "Record D27 in the header and reconcile D5; move the trigger caveat above the command; drop the duplicate continue-with-ledger assertion; add the path-scope line to the role case.",
     "potential_consequence": "Stale guidance, an invalidated command copied before its caveat, and a weaker role rubric.",
     "reproduced": false
+  },
+  {
+    "id": "A11",
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/tests/test_role_resolution.py owner() and test_every_action_has_exactly_one_owner; references/role-config.toml [roles.*]",
+    "trigger_condition": "Applying the D1 fix (QA owns build.review/build.done through a longer prefix while DEV keeps build.). owner() asserts any matching prefix means exactly one owner, so it returns dev and qa and the suite fails on build.review/build.done.",
+    "guard_snippet": "Make owner() mirror longest-prefix resolution, then assert owner('build.review') == 'qa', owner('build.done') == 'qa', owner('build.ticket') == 'dev', and owner('build.review', 'audit') == 'qa'.",
+    "potential_consequence": "Any correct separation-of-duties fix turns the suite red, so the test behaves as a change-detector for the defect instead of a spec for the control.",
+    "reproduced": false
   }
 ]

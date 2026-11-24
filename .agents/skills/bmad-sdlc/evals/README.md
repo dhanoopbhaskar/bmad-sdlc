@@ -35,7 +35,7 @@ XDG_DATA_HOME="$HOME/.local/share" XDG_CONFIG_HOME="$HOME/.config" \
   --mode baseline
 ```
 
-Trigger mode:
+Trigger mode. **This mode is not usable with the stock runner and opencode:** `run_triggers.py` parses Anthropic-style `assistant.message.content[].tool_use` events, while opencode emits `{"type":"tool_use","part":{"type":"tool","tool":"skill","state":{"input":…}}}`, so a real load is reported as 0.0. The query set is still useful for a runtime with a matching parser; do not treat these numbers as verification of description routing and do not tune the description from them until a runner can parse opencode events. Do not edit the vendor runner to work around it.
 
 ```bash
 XDG_DATA_HOME="$HOME/.local/share" XDG_CONFIG_HOME="$HOME/.config" \
@@ -44,8 +44,6 @@ XDG_DATA_HOME="$HOME/.local/share" XDG_CONFIG_HOME="$HOME/.config" \
   --queries .agents/skills/bmad-sdlc/evals/queries.json \
   --output-dir ~/bmad-evals/bmad-sdlc
 ```
-
-**Trigger mode is not usable with the stock runner and opencode.** `run_triggers.py` parses Anthropic-style `assistant.message.content[].tool_use` events. Opencode emits `{"type":"tool_use","part":{"type":"tool","tool":"skill","state":{"input":…}}}`, so a real load is reported as 0.0. The trigger query set is still useful for a runtime with a matching parser; do not treat these numbers as verification of description routing and do not tune the description from them until a runner can parse opencode events. Do not edit the vendor runner to work around it.
 
 ## Grading
 
@@ -57,10 +55,13 @@ Each case exists to test what the model says or chooses; ledger behavior belongs
 
 - Cases that route, recommend, or start a workstream say `Run headless.` and supply a name, track, and size. The skill's headless contract forbids a menu, so the case cannot hang waiting for an answer.
 - `continue-with-ledger` and `status-readonly` stay conversational because they finish without a menu.
-- `continue-with-ledger` stages the project's live `_bmad-output/sdlc/plan.yaml` and `.memlog.md`, because the skill reads those paths. Its rubric is state-agnostic: it asserts that the response resumes the staged workstream and its recorded next gate, not a specific `ws-001` state, so ordinary project progress does not break the case. It also asserts that the staged ledger records no new workstream, that no gate was advanced to passed or overridden, and that every file the skill writes outside the harness caches stays under `_bmad-output/sdlc/`.
+- `continue-with-ledger` stages the committed verify-phase fixture at `evals/_bmad-output/sdlc/plan.yaml` and `.memlog.md`, so the case always resumes the same workstream and open gate. Its rubric is state-agnostic: it asserts that the response resumes the staged workstream and its recorded next gate, not a specific `ws-001` state. It also asserts that the staged ledger records no new workstream, that no gate was advanced to passed or overridden, and that every file the skill writes outside the harness caches stays under `_bmad-output/sdlc/`. The fixture is resolved from `evals/` before the project's live ledger, because `resolve_fixtures` checks the cases directory first.
 - Build-first cases (`fix-trivial`, `missing-build`, `fix-one-session`) supply name/track/size so the headless contract reaches `build.ticket` (or `build.review` for audit), then assert the missing-skill block. A `needs_input` answer is a contract failure for these cases. `feature-one-session` is planning-first: feature/one-session opens with `frame.spec`, and its rubric accepts that or `build.ticket`.
 - `fix-trivial-ready` stages a fake v6 install and asserts `status: ready`. Its `files` entries are `.agents/skills/<name>/SKILL.md`; `resolve_fixtures` preserves the entry path, so the files land where `detect` scans. See §Known limitations for the fixture and staging constraints.
-- `role-explicit-qa` supplies `Role: qa` on a greenfield epic. Its rubric asserts `current_role='qa'` with `role_source='explicit'`, that `next_action` is the PM's `frame.spec` with `role_allowed=false`, and that the response hands off or switches instead of running a PM action. Script-level role resolution is covered by `scripts/tests/test_role_resolution.py`.
+- `role-explicit-qa` supplies `Role: qa` (the same selection as `--role qa`) on a greenfield epic, and stages the plan skills so only role gating can block. A role-blind implementation reports `ready`; the correct run reports `blocked` with `blocked_by` naming `frame.spec`, and its refusal names both `qa` and `pm`. `role-control-pm` is the control: same fixture and skills without `Role:`, asserting `ready` at `frame.spec` for the PM.
+- `role-qa-menu` is interactive, not headless. It stages the verify-phase fixture and asks for the menu with `Role: qa`; the rubric asserts `verify.trace` is offered, DEV-only `build.*` actions are hidden, and the Build phase carries the cross-role `⇄` marker from `phases[].role`.
+
+`Role: <role>` is an accepted input form for the activation role selection, equivalent to `--role <role>`; `SKILL.md` §On Activation step 4 defines it.
 
 ## Known limitations
 
@@ -68,6 +69,6 @@ Each case exists to test what the model says or chooses; ledger behavior belongs
 
 **The skill symlink can leave the case root.** Because the skill is an absolute symlink, resolving `{project-root}/_bmad/scripts/resolve_customization.py` from the skill directory can land in the authoring repo rather than the case. Scrub the `_bmad` path or copy the skill instead of symlinking it; read scope is only partly observable from a transcript, so review it when grading.
 
-**Installed-model coverage is one case.** `fix-trivial-ready` stages a v6 install as individual files, which the runner reproduces as directories, so `detect` reports `v6` and the run reaches `status: ready`. The current-model (`tickets.toml`) happy path and the installed-model alias mapping are still covered only by the ledger tests. A second install fixture is the next step; a case that needs a whole module tree still needs a harness that can stage directories. The stock runner also stages a fixture only at the path written in `files`, so a case cannot pin an open gate at a different target path without a harness change.
+**Installed-model coverage is one case.** `fix-trivial-ready` stages a v6 install as individual files, which the runner reproduces as directories, so `detect` reports `v6` and the run reaches `status: ready`. The current-model (`tickets.toml`) happy path and the installed-model alias mapping are still covered only by the ledger tests. A second install fixture is the next step; a case that needs a whole module tree still needs a harness that can stage directories. The runner stages a fixture only at the path written in `files`; a target-path fixture works only when a same-path file exists under `evals/`, which is how the verify-phase ledger is staged (`files: ["_bmad-output/sdlc/plan.yaml"]`).
 
 **Token and tool accounting targets Anthropic-style transcripts.** Opencode emits `step_finish`/`tool_use` events, so `timing.json` may report zero tokens and zero tool calls even when the transcript and artifacts are complete. Treat the token columns as unknown rather than as zero cost.

@@ -12,6 +12,8 @@ This is the reference for gate levels, evidence, pass criteria, and override eff
 
 A gate is a checkpoint between the conductor and the human. The ledger records the outcome; the evidence lives in the BMAD artifacts. The conductor never advances a required gate on file presence alone: it reads the artifact and checks the pass criteria.
 
+Ownership is separate from criteria: `role-config.toml` names the role that owns each gate, and the gate id doubles as the action id (`build.review` → QA, `verify.trace` → QA, `plan.requirements` → PM). Every gate write records the acting role; `--as <role>` overrides the resolved `current_role`. A role that does not own the gate needs `--reason`, and the audit line names the actor. The same role must not build, review, and approve its own ticket.
+
 ## Gate table
 
 | Gate id | Level by track and size | Condition | Evidence | Pass criteria |
@@ -84,6 +86,6 @@ A phase is complete when every required gate is `passed`, `overridden`, or `skip
 
 `summary` reports `complete` per phase and `blocking` gate ids. Set a phase `done` only when it is complete; `set phases.<phase>.status done` refuses while a required or conditional gate is open, any gate is blocked, or an earlier phase is undecided. A phase already marked `done`/`skipped` is a cache: `summary` and `done` still see any open gate in it and report the inconsistency. Fix the gates, not the status.
 
-When every phase is complete, `summary` recommends `close.mark_done`. Never close on an override alone. `done` records every overridden or reasoned-skipped gate in the close summary.
+When every phase is complete, `summary` recommends `close.mark_done`. Never close on an override alone. `close.mark_done` is role-free: every role may run it, and the close note records the acting role rather than claiming a single owner. `done` records every overridden or reasoned-skipped gate in the close summary.
 
 A phase may be skipped with a recorded reason once its gates are decided (or it has only optional gates).

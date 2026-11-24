@@ -13,22 +13,25 @@ It coordinates BMAD skills rather than replacing them: it routes, validates the 
 
 ## Role-Based SDLC
 
-Three roles split the actions. `references/role-config.toml` is the single source of truth for ownership; the ledger helper reads it.
+Three roles split the actions; `references/role-config.toml` is the single source of ownership.
 
-- **PM (Product Manager)**: `frame.*`, `plan.*` — Plan phase
-- **DEV (Developer)**: `build.*` — Build phase
-- **QA (Quality)**: `solution.*`, `verify.*`, `close.*` — Solution, Verify, Close, and every `audit` track
+- **PM**: `frame.*`, `plan.*`.
+- **DEV**: `build.ticket`, `build.atdd`, `build.tests`, `build.auto`, `build.loop`.
+- **QA**: `build.review`, `build.done`, `solution.*`, `verify.*`, `close.*`, and every `audit` track.
+
+QA reviews and approves done, so one role never builds, reviews, and closes its own work. `close.mark_done` and `<phase>.unblock` are role-free conductor actions.
 
 ### Role Resolution
 
-`summary` reports `current_role`, `role_source`, and per-action `role` / `role_allowed`. Resolution order:
+`summary` reports `current_role`, `role_source`, and per-action `role`/`role_allowed`. Order:
 
-1. Explicit `--role=pm|dev|qa`, passed through to `summary --role`; any other value is an error.
-2. Track override (`audit` → QA).
-3. Phase mapping (`plan` → PM, `solution` → QA, `build` → DEV, `verify`/`close` → QA).
-4. `pm` when there is no ledger or no active phase.
+1. Explicit `--role` or `Role: <role>`; case-insensitive, and an invalid value is a JSON error.
+2. Persisted `role_override` from the `role` verb (`override`).
+3. Track override (`audit` → QA).
+4. Phase mapping from the stored `current_phase` (`plan` → PM, `solution` → QA, `build` → DEV, `verify`/`close` → QA). The recommended `phase` can be ahead; the role follows the stored phase.
+5. `pm` when there is no ledger or no active phase.
 
-An action's owner is resolved by `[track_action_overrides]` first, then the role prefixes. An action with no owner is an error, never a guess. Advisory actions (`advisory.*`) are offered to every role.
+Ownership resolves `[track_action_overrides]` first, then the longest prefix. An unowned action or unmapped phase is an error naming it. Role-free actions (`advisory.*`, `close.mark_done`, `<phase>.unblock`) carry `role_free: true`.
 
 ## Resolution rules
 
@@ -60,8 +63,9 @@ Run in order.
    ```
    Resolve names, languages, output folders, and date. Never fabricate project details; on failure use neutral defaults and say so.
 
-4. **Read the role override** (if the user supplied one):
-   - Accept `--role=pm|dev|qa` or `--role pm`; normalize case, reject any other value with an error
+4. **Read the role selection** (if the user supplied one):
+   - Accept `--role=pm|dev|qa`, `--role pm`, or an input line `Role: <role>`; normalize case, reject any other value with an error
+   - A one-off request is passed to step 8's `summary`; a standing role change is the `role <role> <reason>` verb, which persists `role_override` and logs the reason
    - Do not resolve the role yet: step 8's `summary` returns `current_role`
 
 5. Detect the model:
@@ -95,24 +99,24 @@ Run in order.
    ```
    Follow `references/ledger-schema.md` §Resume semantics for `gates_to_block`, `missing_evidence`, `phases_to_block`, and drift. Treat ticket status as read-only; artifacts win. Do not re-interview about settled decisions.
 
-8. Run `summary` with the step 7 flags, adding `--role <role>` when the user supplied one. `summary.current_role` is authoritative and `role_source` says why (`explicit`, `track`, `phase`, `default`). `next_action.role_allowed: false` means the next action belongs to another role: confirm the handoff or switch role before acting. The menu renders the per-phase `required_open`, `conditional_open`, and `optional_open` from `summary.phases[]` (the flat top-level lists are totals that include per-ticket gates). `next_action.skill_installed: false` or `next_action.skill_manifest_only: true` triggers the missing-skill rule.
+8. Run `summary` with the step 7 flags, adding `--role <role>` when the user supplied a one-off role. `summary.current_role` is authoritative and `role_source` says why (`explicit`, `override`, `track`, `phase`, `default`). `next_action.role_allowed: false` means the next action belongs to another role: confirm the handoff or run the `role` verb before acting. A role-free next action (`role_free: true`, `role: null`) may be run by any role. The menu renders the per-phase `role`, `required_open`, `conditional_open`, and `optional_open` from `summary.phases[]` (the flat top-level lists are totals that include per-ticket gates). `next_action.skill_installed: false` or `next_action.skill_manifest_only: true` triggers the missing-skill rule.
 
 9. **Load references for `summary.current_role`**:
    - Base: `references/phase-map.md`, `references/gate-matrix.md`, `references/handoff-protocol.md`
    - Overlay: `references/<role>/phase-map.md`, `references/<role>/gate-matrix.md`
    - When the role is `qa` and the phase is `solution`, also load `references/qa/solution-phase.md`
-   - Overlays add role notes; gate levels and the next action come from `summary`, which wins on conflicts
+   - Overlays add role deltas; gate levels and the next action come from `summary`, which wins on conflicts
 
-10. Run `{workflow.activation_steps_append}`, then render `references/menu.md` filtered to `current_role` (each action's `role` field names its owner; advisory actions are open to every role). In headless mode, emit the unfiltered `summary` lists.
+10. Run `{workflow.activation_steps_append}`, then render `references/menu.md` filtered to `current_role` (each action's `role` field names its owner; `role_free` actions are open to every role). In headless mode, emit the unfiltered `summary` lists.
 
 ## The loop
 
 1. The user picks a phase and action, or accepts the recommendation.
-2. **Filter the menu to `current_role`**: use each action's `role` field from `summary`; offer advisory actions to any role. The headless block keeps every list verbatim.
+2. **Filter the menu to `current_role`**: use each action's `role` field from `summary`; offer `role_free` actions to any role. The headless block keeps every list verbatim.
 3. Resolve the action from `references/phase-map.md` (base + role overlay). Every action names its persona and its conductor role (`summary` reports the role); missing skill: resolve an alias; if none, follow `references/version-adapters.md` §Missing-skill behavior.
-4. **Role transition check**: If the chosen action belongs to a different role, confirm handoff or switch role explicitly.
+4. **Role transition check**: If the chosen action's `role` is not `current_role` and it is not `role_free`, confirm a handoff, or persist a role change with the `role` verb and a reason.
 5. Prepare the handoff per `references/handoff-protocol.md` (base + role overlay), starting at `{workflow.handoff_preference}`; prefer a fresh subagent. Record the ledger and audit-trail SHA-256 digests.
-   - Subagent receives the brief from `references/handoff-protocol.md` §Brief template plus `Role: <role>`, `--role=<role> --plan=<ledger> --workstream=<id> --action=<action>`. Nothing else.
+   - Subagent receives the brief from `references/handoff-protocol.md` §Brief template plus its `Role: <role>` and `Action: <action id>` lines, and `--role=<role> --plan=<ledger> --workstream=<id>`. Nothing else.
    - No session summary passed — only ledger artifacts
 6. Validate the return (write its JSON to a file first) with the recorded digests:
    ```bash
@@ -120,11 +124,12 @@ Run in order.
      --plan {workflow.ledger_path} --memlog {workflow.memlog_path} \
      --project-root {project-root} --return-file <json> \
      --expect-ledger-sha <sha-before-handoff> \
-     --expect-memlog-sha <sha-before-handoff>
+     --expect-memlog-sha <sha-before-handoff> \
+     --expect-role <role> --expect-action <action-id>
    ```
-   A `done` return needs one artifact inside `{project-root}` other than the ledger or the audit trail; open questions block it unless accepted. `ok: false` means `blocked`; judge scope and evidence.
-7. Record the event, update the ledger, and set per-ticket gates with `ticket`. Use `resize` to change track or size. When `summary` reports a phase `complete`, set it `done`. When all phases are complete, recommend `close.mark_done` and close with `done`.
-8. **Role handoff on gate pass**: When a gate passes and `next_action.role` differs from `current_role`, hand off per `references/handoff-protocol.md`. In headless mode emit the block with `current_role` and `next_action`; interactively ask one line and wait.
+   A `done` return needs `role` and `action` fields matching the handoff. It also needs one artifact inside `{project-root}` other than the ledger or the audit trail; open questions block it unless accepted. `ok: false` means `blocked`; judge scope and evidence.
+7. Record the event, update the ledger, and set per-ticket gates with `ticket`. A gate write records the acting role; pass `--as <role>` when you record another role's decision, and a foreign-role decision needs `--reason`. Use `resize` to change track or size. When `summary` reports a phase `complete`, set it `done`. When all phases are complete, recommend `close.mark_done` and close with `done`.
+8. **Role handoff on mismatch**: When `next_action.role_allowed` is false, hand off per `references/handoff-protocol.md` §Role Transitions. A phase boundary fires when the phase is marked `done`, not merely when a gate passes. In headless mode emit the block with `current_role`, `blocked_by`, `next_action`; interactively ask one line and wait.
 9. Present the gate per `references/gate-matrix.md` (base + role overlay) §Gate interaction.
 10. Act on the choice, then re-render the menu filtered to `current_role`.
 
@@ -137,7 +142,7 @@ Run in order.
 ## Guardrails
 
 - **Ask at every gate**, optional ones included, in one line.
-- **One role at a time.** Never run an action whose `role` is not `current_role` (advisory actions excepted); confirm a handoff or switch role with a logged reason.
+- **One role at a time.** Never run an action whose `role` is not `current_role` unless it is `role_free`; confirm a handoff or persist a role change with `role <role> <reason>`.
 - **Never mark a ticket `done` without an approved `build.done` gate.**
 - **Overrides need a reason.** The script rejects one without it; skipping a required or conditional gate is an override. Marking a gate `blocked` never passes it: resolve it or override with a reason.
 - **Reopen with a reason.** Moving a decided gate to open, blocked, or another decision — including back to `passed` — needs `--reason`. A done workstream accepts no gate or phase writes until you reopen it with `--reason`; a paused one refuses writes.

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -19,8 +20,52 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parents[1] / "sdlc_plan.py"
 REPO_ROOT = Path(__file__).resolve().parents[5]
 
+_TICKET_GATE_ROLES = {
+    "ticket": "dev",
+    "tests": "dev",
+    "review": "qa",
+    "done": "qa",
+}
+
+
+def _gate_owner(args: tuple[str, ...]) -> str | None:
+    """The role that owns the gate a test command writes.
+
+    The suite sets many gates directly; the actor guard added in round 11 would
+    otherwise need `--reason` on every one. This infers the owning role so the
+    existing tests keep exercising the write they name. The role suite asserts
+    the guard itself.
+    """
+    parts = list(args)
+    if not parts:
+        return None
+    if parts[0] == "ticket" and "--gate" in parts:
+        try:
+            return _TICKET_GATE_ROLES.get(parts[parts.index("--gate") + 1])
+        except IndexError:
+            return None
+    if parts[0] != "set" or "--path" not in parts:
+        return None
+    try:
+        path = parts[parts.index("--path") + 1]
+    except IndexError:
+        return None
+    phase_gate = re.match(r"gates\.(plan|solution|verify|close)\.", path)
+    if phase_gate:
+        return "pm" if phase_gate.group(1) == "plan" else "qa"
+    ticket_gate = re.match(
+        r"tickets\..+?\.gates\.(ticket|tests|review|done)\.", path
+    )
+    if ticket_gate:
+        return _TICKET_GATE_ROLES.get(ticket_gate.group(1))
+    return None
+
 
 def run_full(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
+    args = tuple(args)
+    owner = _gate_owner(args)
+    if owner and "--as" not in args:
+        args = (*args, "--as", owner)
     return subprocess.run(
         ["uv", "run", "--no-cache", str(SCRIPT), *args],
         cwd=str(cwd or REPO_ROOT),
@@ -4431,6 +4476,8 @@ class LedgerTests(unittest.TestCase):
                 "size",
                 "status",
                 "current_phase",
+                "role",
+                "role_override",
                 "next_action",
             },
             set(summary["workstreams_detail"][0]),

@@ -105,7 +105,7 @@ A fresh session reads the ledger, re-runs detection, reconciles the BMAD artifac
     menu.md                      # dashboard, phase menu, action menu, verbs
     headless.md                  # unattended contract: emit, stop at the gate
     role-config.toml             # single source of truth for PM/DEV/QA ownership
-    pm/ dev/ qa/                 # role overlays: actions, gates, handoffs
+    pm/ dev/ qa/                 # role overlays: role deltas and handoff links
   assets/plan-template.yaml
   evals/                         # cases, trigger queries, adapter, run notes
   scripts/sdlc_plan.py           # detect/init/validate/summary/set/append/ticket/done/migrate/resize/reconcile/verify-return/log

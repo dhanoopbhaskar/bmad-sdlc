@@ -3,7 +3,10 @@
 
 Role ownership is defined once in `references/role-config.toml`. These tests
 pin the deterministic surface the conductor reads: `summary.current_role`,
-`role_source`, and per-action `role` / `role_allowed`.
+`role_source`, per-action `role` / `role_allowed`, the persisted `role`
+override, and the role config loader. They import the script's resolver rather
+than re-implementing it, and derive the action set from the script's gate,
+ticket, and skill-action tables so a new action with no owner fails the suite.
 
 Run:
   uv run --no-cache python -m unittest discover \
@@ -12,7 +15,12 @@ Run:
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import importlib.util
+import io
 import json
+import shutil
 import subprocess
 import tempfile
 import tomllib
@@ -26,29 +34,17 @@ ROLE_CONFIG = SKILL_ROOT / "references" / "role-config.toml"
 
 PHASES = ("plan", "solution", "build", "verify", "close")
 
-# Every action the helper can emit, plus the non-gate actions the menu offers.
-ACTIONS = {
-    "frame.spec",
-    "plan.requirements",
-    "plan.stories",
-    "plan.sprint",
-    "plan.ux",
-    "plan.architecture",
-    "solution.test_design",
-    "solution.framework",
-    "solution.ci",
-    "solution.unblock",
-    "build.ticket",
-    "build.tests",
-    "build.review",
-    "build.done",
-    "verify.trace",
-    "verify.nfr",
-    "verify.test_review",
-    "close.retro",
-    "close.walkthrough",
-    "close.mark_done",
-}
+
+def load_module():
+    """Import the helper so tests call the real resolver, not a copy."""
+    spec = importlib.util.spec_from_file_location("sdlc_plan_roles", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+sdlc = load_module()
 
 
 def run_full(*args: str) -> subprocess.CompletedProcess:
@@ -76,46 +72,237 @@ def run(*args: str) -> dict:
 class RoleConfigTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = tomllib.loads(ROLE_CONFIG.read_text())
-        self.roles = self.config["roles"]
 
-    def owner(self, action: str, track: str | None = None) -> set[str]:
-        override = (self.config["track_action_overrides"] or {}).get(
-            f"{track}.{action}"
-        )
-        if override:
-            return {override}
-        return {
-            role
-            for role, spec in self.roles.items()
-            if any(action.startswith(prefix) for prefix in spec["action_prefixes"])
-        }
+    def test_default_config_matches_the_toml(self) -> None:
+        """The in-script fallback must not drift from the shipped config."""
+        self.assertEqual(sdlc.DEFAULT_ROLE_CONFIG, self.config)
 
-    def test_config_is_complete_and_consistent(self) -> None:
-        self.assertEqual(set(self.roles), {"pm", "dev", "qa"})
-        self.assertEqual(set(self.config["phase_roles"]), set(PHASES))
-        for role, spec in self.roles.items():
-            self.assertTrue(spec["action_prefixes"], role)
-            self.assertTrue(set(spec["phases"]) <= set(PHASES), role)
-            for reference in spec["references"]:
-                self.assertTrue((SKILL_ROOT / reference).is_dir(), reference)
-        for mapping in ("phase_roles", "track_roles", "track_action_overrides"):
-            for owner in self.config[mapping].values():
-                self.assertIn(owner, self.roles, mapping)
+    def test_config_validates(self) -> None:
+        self.assertIs(sdlc.validate_role_config(self.config), self.config)
 
-    def test_every_action_has_exactly_one_owner(self) -> None:
-        for action in ACTIONS:
-            self.assertEqual(len(self.owner(action)), 1, action)
-        self.assertEqual(self.owner("build.review", "audit"), {"qa"})
-        self.assertEqual(self.owner("build.review", "feature"), {"dev"})
+    def test_every_action_has_one_owner_or_is_role_free(self) -> None:
+        for action in sdlc.ALL_ACTION_IDS:
+            if sdlc.role_is_free(action, self.config):
+                self.assertIsNone(sdlc.role_for_action(action, "feature"), action)
+                continue
+            for track in sdlc.TRACKS:
+                self.assertIsNotNone(
+                    sdlc.role_for_action(action, track),
+                    f"{action} on track {track}",
+                )
+
+    def test_review_and_done_are_qa_on_every_track(self) -> None:
+        for track in sdlc.TRACKS:
+            self.assertEqual(sdlc.role_for_action("build.review", track), "qa")
+            self.assertEqual(sdlc.role_for_action("build.done", track), "qa")
+            self.assertEqual(sdlc.role_for_action("build.ticket", track), "dev")
 
     def test_phase_roles_cover_the_lifecycle(self) -> None:
         phase_roles = self.config["phase_roles"]
-        self.assertEqual(phase_roles["solution"], "qa")
+        for phase in PHASES:
+            self.assertIn(phase, phase_roles)
+            self.assertIn(phase_roles[phase], self.config["roles"])
         self.assertEqual(phase_roles["build"], "dev")
         self.assertEqual(self.config["track_roles"]["audit"], "qa")
-        self.assertEqual(
-            set(self.roles["qa"]["phases"]), {"solution", "verify", "close"}
+
+    def test_conductor_actions_are_role_free(self) -> None:
+        for action in (*sdlc.CONDUCTOR_ACTIONS, *sdlc.PHASE_UNBLOCK_ACTIONS):
+            self.assertTrue(sdlc.role_is_free(action, self.config), action)
+            self.assertTrue(sdlc.role_allows(action, "dev", "feature"), action)
+
+    def test_invalid_configs_are_rejected(self) -> None:
+        cases = {
+            "string prefixes": {
+                **self.config,
+                "roles": {
+                    **self.config["roles"],
+                    "dev": {**self.config["roles"]["dev"], "action_prefixes": "build."},
+                },
+            },
+            "unknown role": {
+                **self.config,
+                "phase_roles": {**self.config["phase_roles"], "build": "nobody"},
+            },
+            "unknown role": {
+                **self.config,
+                "track_roles": {"audit": "nobody"},
+            },
+            "roles.phases is gone": {
+                **self.config,
+                "roles": {
+                    **self.config["roles"],
+                    "qa": {**self.config["roles"]["qa"], "phases": ["verify"]},
+                },
+            },
+        }
+        for label, config in cases.items():
+            with self.assertRaises(sdlc.RoleConfigError, msg=label):
+                sdlc.validate_role_config(config)
+
+
+class ConsoleEscape:
+    """Capture the JSON a fail() writes before it exits."""
+
+    def __init__(self) -> None:
+        self.buffer = io.StringIO()
+
+    def __enter__(self) -> "ConsoleEscape":
+        self.redirect = contextlib.redirect_stdout(self.buffer)
+        self.redirect.__enter__()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.redirect.__exit__(*exc)
+
+    def payload(self) -> dict:
+        return json.loads(self.buffer.getvalue())
+
+
+class ConfigFailureTests(unittest.TestCase):
+    """A broken role config fails summary, not detect/init/validate/--help."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="bmad-sdlc-rolecfg-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.root = self.tmp / "project"
+        self.root.mkdir()
+        self.skill = self.tmp / "skill"
+        (self.skill / "scripts").mkdir(parents=True)
+        (self.skill / "references").mkdir()
+        shutil.copy2(SCRIPT, self.skill / "scripts" / "sdlc_plan.py")
+        self.copied_script = self.skill / "scripts" / "sdlc_plan.py"
+        self.ledger = self.root / "_bmad-output" / "sdlc" / "plan.yaml"
+
+    def write_config(self, text: str) -> None:
+        shutil.copy2(ROLE_CONFIG, self.skill / "references" / "role-config.toml")
+        (self.skill / "references" / "role-config.toml").write_text(
+            text, encoding="utf-8"
         )
+
+    def copied(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["uv", "run", "--no-cache", str(self.copied_script), *args],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_malformed_toml_breaks_only_summary(self) -> None:
+        run(
+            "init",
+            "--project-root",
+            str(self.root),
+            "--name",
+            "Config Fixture",
+            "--track",
+            "fix",
+            "--size",
+            "trivial",
+            "--model",
+            "v6",
+        )
+        self.write_config("this is not toml [[[")
+        detect = self.copied("detect", "--project-root", str(self.root))
+        self.assertEqual(detect.returncode, 0, detect.stderr)
+        self.assertTrue(json.loads(detect.stdout)["ok"])
+        helped = self.copied("--help")
+        self.assertEqual(helped.returncode, 0, helped.stderr)
+        validated = self.copied("validate", "--plan", str(self.ledger))
+        self.assertEqual(validated.returncode, 0, validated.stdout)
+        summary = self.copied("summary", "--plan", str(self.ledger))
+        self.assertNotEqual(summary.returncode, 0)
+        payload = json.loads(summary.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("invalid role config", payload["error"])
+
+    def test_unmapped_phase_fails_naming_the_phase(self) -> None:
+        config = tomllib.loads(ROLE_CONFIG.read_text())
+        del config["phase_roles"]["verify"]
+        self.write_config(
+            "\n".join(
+                [
+                    "[roles.pm]",
+                    'action_prefixes = ["frame.", "plan."]',
+                    "[roles.dev]",
+                    'action_prefixes = ["build."]',
+                    "[roles.qa]",
+                    'action_prefixes = ["solution.", "verify.", "close."]',
+                    "[phase_roles]",
+                    *[
+                        f'{phase} = "{role}"'
+                        for phase, role in config["phase_roles"].items()
+                    ],
+                    "[track_roles]",
+                    'audit = "qa"',
+                    "[track_action_overrides]",
+                    "[advisory]",
+                    'prefix = "advisory."',
+                ]
+            )
+            + "\n"
+        )
+        with ConsoleEscape() as escaped, self.assertRaises(SystemExit):
+            sdlc.role_config.cache_clear()
+            original = sdlc.ROLE_CONFIG_PATH
+            try:
+                sdlc.ROLE_CONFIG_PATH = self.skill / "references" / "role-config.toml"
+                sdlc.assert_phase_mapped("verify", "feature", sdlc.role_config())
+            finally:
+                sdlc.ROLE_CONFIG_PATH = original
+                sdlc.role_config.cache_clear()
+        self.assertIn("phase 'verify' has no [phase_roles] entry", escaped.payload()["error"])
+
+
+class RoleResolverTests(unittest.TestCase):
+    def test_unowned_action_fails_naming_the_action(self) -> None:
+        with ConsoleEscape() as escaped, self.assertRaises(SystemExit):
+            sdlc.role_config.cache_clear()
+            original = sdlc.ROLE_CONFIG_PATH
+            temp = Path(tempfile.mkdtemp(prefix="bmad-sdlc-rolecfg-"))
+            self.addCleanup(shutil.rmtree, temp, True)
+            config = tomllib.loads(ROLE_CONFIG.read_text())
+            config["roles"]["qa"]["action_prefixes"] = ["solution.", "close."]
+            (temp / "role-config.toml").write_text(
+                "\n".join(
+                    [
+                        "[roles.pm]",
+                        'action_prefixes = ["frame.", "plan."]',
+                        "[roles.dev]",
+                        'action_prefixes = ["build."]',
+                        "[roles.qa]",
+                        'action_prefixes = ["solution.", "close."]',
+                        "[phase_roles]",
+                        *[
+                            f'{phase} = "{role}"'
+                            for phase, role in config["phase_roles"].items()
+                        ],
+                        "[track_roles]",
+                        'audit = "qa"',
+                        "[track_action_overrides]",
+                        "[advisory]",
+                        'prefix = "advisory."',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            try:
+                sdlc.ROLE_CONFIG_PATH = temp / "role-config.toml"
+                sdlc.annotate_role(
+                    {"action": "verify.trace"}, "feature", "dev", sdlc.role_config()
+                )
+            finally:
+                sdlc.ROLE_CONFIG_PATH = original
+                sdlc.role_config.cache_clear()
+        self.assertIn("no role owns action 'verify.trace'", escaped.payload()["error"])
+
+    def test_annotation_marks_conductor_actions_role_free(self) -> None:
+        entry = {"action": "close.mark_done"}
+        sdlc.annotate_role(entry, "feature", "dev", tomllib.loads(ROLE_CONFIG.read_text()))
+        self.assertIsNone(entry["role"])
+        self.assertTrue(entry["role_free"])
+        self.assertTrue(entry["role_allowed"])
 
 
 class SummaryRoleTests(unittest.TestCase):
@@ -127,7 +314,13 @@ class SummaryRoleTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def init(self, track: str, size: str | None = None, root: Path | None = None):
+    def init(
+        self,
+        track: str,
+        size: str | None = None,
+        root: Path | None = None,
+        model: str = "v6",
+    ):
         root = root or self.root
         args = [
             "init",
@@ -137,6 +330,8 @@ class SummaryRoleTests(unittest.TestCase):
             "Role Fixture",
             "--track",
             track,
+            "--model",
+            model,
         ]
         if size:
             args += ["--size", size]
@@ -170,35 +365,99 @@ class SummaryRoleTests(unittest.TestCase):
                 args += ["--reason", "role fixture"]
             run(*args)
 
-    def test_plan_then_solution_resolves_to_owner(self) -> None:
+    def mark(self, phase: str, status: str) -> None:
+        args = [
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            f"phases.{phase}.status",
+            "--value",
+            status,
+        ]
+        if status in ("done", "skipped"):
+            args += ["--reason", "role fixture"]
+        run(*args)
+
+    def ticket(self, gate: str, status: str = "passed") -> None:
+        args = [
+            "ticket",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--id",
+            "T1",
+            "--gate",
+            gate,
+            "--status",
+            status,
+        ]
+        if gate in ("review", "done"):
+            args += ["--as", "qa"]
+        run(*args)
+
+    def plan_done(self) -> None:
+        self.decide("plan", ("requirements", "stories", "sprint"), "passed")
+        self.decide("plan", ("ux", "architecture"), "skipped")
+        self.mark("plan", "done")
+
+    def test_plan_phase_owns_pm_actions(self) -> None:
         self.init("greenfield", "epic")
         summary = self.summary()
         self.assertEqual(summary["current_role"], "pm")
         self.assertEqual(summary["role_source"], "phase")
+        self.assertEqual(summary["workstream"]["current_phase"], "plan")
         self.assertEqual(summary["next_action"]["action"], "frame.spec")
         self.assertEqual(summary["next_action"]["role"], "pm")
         self.assertTrue(summary["next_action"]["role_allowed"])
         self.assertEqual(
-            {item["role"] for item in summary["optional_actions"]}, {"pm"}
+            [phase["role"] for phase in summary["phases"]],
+            ["pm", "qa", "dev", "qa", "qa"],
         )
+        self.assertEqual(summary["workstreams_detail"][0]["role"], "pm")
 
-        self.decide("plan", ("requirements", "stories"), "passed")
-        self.decide("plan", ("ux", "architecture", "sprint"), "skipped")
-        summary = self.summary()
-        self.assertEqual(summary["current_role"], "qa")
-        self.assertEqual(summary["next_action"]["action"], "solution.test_design")
-        self.assertEqual(summary["next_action"]["role"], "qa")
-        self.assertTrue(summary["next_action"]["role_allowed"])
+    def test_stored_phase_advances_only_when_marked_done(self) -> None:
+        self.init("greenfield", "epic")
+        self.decide("plan", ("requirements", "stories", "sprint"), "passed")
+        self.decide("plan", ("ux", "architecture"), "skipped")
+        # Every plan gate is decided, but the phase is not done: the role stays
+        # PM and the stored phase is not rewritten to the recommended phase.
+        undecided = self.summary()
+        self.assertEqual(undecided["workstream"]["current_phase"], "plan")
+        self.assertEqual(undecided["current_role"], "pm")
+        self.assertEqual(undecided["phase"], "solution")
+
+        self.mark("plan", "done")
+        advanced = self.summary()
+        self.assertEqual(advanced["workstream"]["current_phase"], "solution")
+        self.assertEqual(advanced["current_role"], "qa")
+        self.assertEqual(advanced["next_action"]["action"], "solution.test_design")
+        self.assertEqual(advanced["next_action"]["role"], "qa")
+        self.assertTrue(advanced["next_action"]["role_allowed"])
 
     def test_explicit_role_blocks_foreign_action(self) -> None:
         self.init("greenfield", "epic")
-        self.decide("plan", ("requirements", "stories"), "passed")
-        self.decide("plan", ("ux", "architecture", "sprint"), "skipped")
-        summary = self.summary("--role", "pm")
-        self.assertEqual(summary["current_role"], "pm")
+        self.plan_done()
+        summary = self.summary("--role", "QA")
+        self.assertEqual(summary["current_role"], "qa")
         self.assertEqual(summary["role_source"], "explicit")
-        self.assertFalse(summary["next_action"]["role_allowed"])
-        self.assertEqual(summary["next_action"]["role"], "qa")
+        self.assertTrue(summary["next_action"]["role_allowed"])
+
+        blocked = self.summary("--role", "pm")
+        self.assertEqual(blocked["role_source"], "explicit")
+        self.assertFalse(blocked["next_action"]["role_allowed"])
+        self.assertEqual(blocked["next_action"]["role"], "qa")
+
+    def test_invalid_role_returns_json(self) -> None:
+        self.init("fix", "trivial")
+        result = run_full("summary", "--plan", str(self.ledger), "--role", "bogus")
+        self.assertNotEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertIn("unknown role", payload["error"])
 
     def test_build_and_audit_roles(self) -> None:
         self.init("fix", "trivial")
@@ -220,6 +479,246 @@ class SummaryRoleTests(unittest.TestCase):
         self.assertEqual(payload["next_action"]["gate"], "build.audit.review")
         self.assertEqual(payload["next_action"]["role"], "qa")
         self.assertTrue(payload["next_action"]["role_allowed"])
+
+    def test_completed_workstream_reports_role_free_close(self) -> None:
+        self.init("fix", "trivial")
+        self.ticket("ticket")
+        self.ticket("review")
+        self.ticket("done")
+        summary = self.summary()
+        self.assertEqual(summary["next_action"]["action"], "close.mark_done")
+        self.assertIsNone(summary["next_action"]["role"])
+        self.assertTrue(summary["next_action"]["role_free"])
+        self.assertTrue(summary["next_action"]["role_allowed"])
+        for entry in summary["optional_actions"]:
+            self.assertIn("role", entry)
+            self.assertIn("role_allowed", entry)
+
+        done = run(
+            "done",
+            "--plan",
+            str(self.ledger),
+            "--accept-missing-tickets",
+            "--reason",
+            "role fixture",
+        )
+        self.assertTrue(done["ok"], done)
+        closed = self.summary()
+        self.assertIsNone(closed["active_workstream"])
+        self.assertIn("current_role", closed)
+        self.assertIn("role_source", closed)
+        self.assertEqual(closed["role_source"], "phase")
+
+    def test_paused_workstream_keeps_the_role_fields(self) -> None:
+        self.init("fix", "trivial")
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "status",
+            "--value",
+            "paused",
+            "--reason",
+            "role fixture",
+        )
+        summary = self.summary()
+        self.assertIsNone(summary["active_workstream"])
+        self.assertEqual(summary["current_role"], "dev")
+        self.assertEqual(summary["role_source"], "phase")
+
+    def test_default_role_source_is_reachable(self) -> None:
+        self.ledger.parent.mkdir(parents=True, exist_ok=True)
+        self.ledger.write_text(
+            "\n".join(
+                [
+                    "schema: bmad-sdlc/1",
+                    "project: Empty",
+                    "created: '2026-01-01T00:00:00+00:00'",
+                    "updated: '2026-01-01T00:00:00+00:00'",
+                    "bmad:",
+                    "  model: unknown",
+                    "active_workstream: null",
+                    "workstreams: {}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        summary = self.summary()
+        self.assertEqual(summary["current_role"], "pm")
+        self.assertEqual(summary["role_source"], "default")
+
+    def test_role_override_persists_and_clears(self) -> None:
+        self.init("fix", "trivial")
+        chosen = run(
+            "role",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--role",
+            "QA",
+            "--reason",
+            "review pass",
+        )
+        self.assertEqual(chosen["current_role"], "qa")
+        summary = self.summary()
+        self.assertEqual(summary["current_role"], "qa")
+        self.assertEqual(summary["role_source"], "override")
+        self.assertFalse(summary["next_action"]["role_allowed"])
+
+        # A resume clears the per-run override and re-resolves from the phase.
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "status",
+            "--value",
+            "paused",
+            "--reason",
+            "role fixture",
+        )
+        run(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "status",
+            "--value",
+            "active",
+            "--reason",
+            "role fixture",
+        )
+        resumed = self.summary()
+        self.assertEqual(resumed["role_source"], "phase")
+        self.assertEqual(resumed["current_role"], "dev")
+        memlog = (self.root / "_bmad-output" / "sdlc" / ".memlog.md").read_text()
+        self.assertIn("role set to qa", memlog)
+
+    def test_unknown_gate_names_the_valid_ids(self) -> None:
+        self.init("fix", "trivial")
+        self.ticket("ticket")
+        bad = run_full(
+            "set",
+            "--plan",
+            str(self.ledger),
+            "--workstream",
+            "ws-001",
+            "--path",
+            "tickets.T1.gates.bogus.status",
+            "--value",
+            "passed",
+        )
+        self.assertNotEqual(bad.returncode, 0)
+        error = json.loads(bad.stdout)["error"]
+        for gate in sdlc.TICKET_GATES:
+            self.assertIn(gate, error)
+        bad_gate = run_full(
+            "ticket",
+            "--plan",
+            str(self.ledger),
+            "--id",
+            "T1",
+            "--gate",
+            "bogus",
+            "--status",
+            "passed",
+        )
+        self.assertNotEqual(bad_gate.returncode, 0)
+        self.assertIn("choose one of", json.loads(bad_gate.stdout)["error"])
+
+    def test_foreign_gate_decision_needs_a_reason(self) -> None:
+        self.init("fix", "trivial")
+        self.ticket("ticket")
+        refused = run_full(
+            "ticket",
+            "--plan",
+            str(self.ledger),
+            "--id",
+            "T1",
+            "--gate",
+            "review",
+            "--status",
+            "passed",
+        )
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("belongs to qa", json.loads(refused.stdout)["error"])
+        allowed = run_full(
+            "ticket",
+            "--plan",
+            str(self.ledger),
+            "--id",
+            "T1",
+            "--gate",
+            "review",
+            "--status",
+            "passed",
+            "--reason",
+            "conductor recorded QA review",
+        )
+        self.assertEqual(allowed.returncode, 0, allowed.stdout)
+        memlog = (self.root / "_bmad-output" / "sdlc" / ".memlog.md").read_text()
+        self.assertIn("by dev", memlog)
+
+    def test_verify_return_checks_role_and_action(self) -> None:
+        self.init("fix", "trivial")
+        artifact = self.root / "change.md"
+        artifact.write_text("# change\n", encoding="utf-8")
+        memlog = self.root / "_bmad-output" / "sdlc" / ".memlog.md"
+        ledger_sha = hashlib.sha256(self.ledger.read_bytes()).hexdigest()
+        memlog_sha = hashlib.sha256(memlog.read_bytes()).hexdigest()
+
+        def verify(role: str | None) -> dict:
+            returned = {
+                "status": "done",
+                "artifacts": [{"path": "change.md"}],
+                "evidence": ["change.md"],
+            }
+            if role is not None:
+                returned["role"] = role
+                returned["action"] = "build.ticket"
+            return json.loads(
+                run_full(
+                    "verify-return",
+                    "--plan",
+                    str(self.ledger),
+                    "--project-root",
+                    str(self.root),
+                    "--return",
+                    json.dumps(returned),
+                    "--expect-ledger-sha",
+                    ledger_sha,
+                    "--expect-memlog-sha",
+                    memlog_sha,
+                    "--expect-role",
+                    "qa",
+                    "--expect-action",
+                    "build.ticket",
+                ).stdout
+            )
+
+        mismatch = verify("dev")
+        self.assertFalse(mismatch["ok"])
+        self.assertTrue(
+            any("does not match expected 'qa'" in reason for reason in mismatch["reasons"])
+        )
+
+        missing = verify(None)
+        self.assertFalse(missing["ok"])
+        self.assertTrue(any("does not name a role" in reason for reason in missing["reasons"]))
+
+        accepted = verify("qa")
+        self.assertTrue(accepted["ok"], accepted["reasons"])
+        self.assertEqual(accepted["role"], "qa")
+        self.assertEqual(accepted["action"], "build.ticket")
 
 
 if __name__ == "__main__":
