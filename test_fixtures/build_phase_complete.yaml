@@ -1,0 +1,339 @@
+# bmad-sdlc runtime ledger - Build phase complete fixture
+schema: bmad-sdlc/1
+project: TaskFlow
+created: "2026-11-25T10:00:00+00:00"
+updated: "2026-11-25T16:00:00+00:00"
+
+bmad:
+  model: current
+  memlog: _bmad-output/sdlc/.memlog.md
+  hub: bmad-help
+  output_folder: _bmad-output
+  planning_artifacts: _bmad-output/planning-artifacts
+  implementation_artifacts: _bmad-output/implementation-artifacts
+  test_artifacts: _bmad-output/test-artifacts
+
+active_workstream: ws-001
+
+workstreams:
+  ws-001:
+    name: TaskFlow
+    track: greenfield
+    size: epic
+    status: active
+    started: "2026-11-25T10:00:00+00:00"
+    updated: "2026-11-25T16:00:00+00:00"
+    current_phase: verify
+    artifacts:
+      spec: _bmad-output/specs/spec-taskflow/SPEC.md
+      prd: _bmad-output/planning-artifacts/prd-taskflow.md
+      ux: _bmad-output/ux/DESIGN.md
+      architecture: _bmad-output/architecture/architecture-taskflow.md
+      stories: _bmad-output/planning-artifacts/tickets.toml
+      tickets: _bmad-output/planning-artifacts/tickets.toml
+      sprint_plan: _bmad-output/planning-artifacts/sprint-status.yaml
+      test_design: _bmad-output/test-artifacts/test-design.md
+      test_framework: _bmad-output/test-artifacts/test-framework
+      ci: _bmad-output/test-artifacts/ci-config.yml
+      trace: _bmad-output/test-artifacts/traceability-matrix.md
+    phases:
+      plan:
+        status: done
+        gate: required
+        evidence:
+          - _bmad-output/specs/spec-taskflow/SPEC.md
+          - _bmad-output/planning-artifacts/prd-taskflow.md
+          - _bmad-output/ux/DESIGN.md
+          - _bmad-output/ux/EXPERIENCE.md
+          - _bmad-output/architecture/architecture-taskflow.md
+          - _bmad-output/planning-artifacts/tickets.toml
+          - _bmad-output/planning-artifacts/sprint-status.yaml
+        note: "All plan gates passed"
+      solution:
+        status: done
+        gate: conditional
+        evidence:
+          - _bmad-output/test-artifacts/test-design.md
+          - _bmad-output/test-artifacts/test-framework
+          - _bmad-output/test-artifacts/ci-config.yml
+        note: "All solution gates passed"
+      build:
+        status: done
+        gate: required
+        evidence:
+          - _bmad-output/implementation-artifacts/story-t1-plan.md
+          - _bmad-output/test-artifacts/test-run-t1.txt
+          - _bmad-output/implementation-artifacts/t1-review.md
+          - _bmad-output/implementation-artifacts/story-t2-plan.md
+          - _bmad-output/test-artifacts/test-run-t2.txt
+          - _bmad-output/implementation-artifacts/t2-review.md
+          - _bmad-output/implementation-artifacts/story-t3-plan.md
+          - _bmad-output/test-artifacts/test-run-t3.txt
+          - _bmad-output/implementation-artifacts/t3-review.md
+          - _bmad-output/implementation-artifacts/story-t4-plan.md
+          - _bmad-output/test-artifacts/test-run-t4.txt
+          - _bmad-output/implementation-artifacts/t4-review.md
+          - _bmad-output/implementation-artifacts/story-t5-plan.md
+          - _bmad-output/test-artifacts/test-run-t5.txt
+          - _bmad-output/implementation-artifacts/t5-review.md
+        note: "All 5 tickets built, tested, reviewed, and approved"
+      verify:
+        status: active
+        gate: required
+        evidence: []
+        note: ""
+      close:
+        status: pending
+        gate: optional
+        evidence: []
+        note: ""
+    gates:
+      plan:
+        requirements:
+          status: passed
+          level: required
+          decided_at: "2026-11-25T10:30:00+00:00"
+          override_reason: null
+          actor: pm
+        stories:
+          status: passed
+          level: required
+          decided_at: "2026-11-25T11:15:00+00:00"
+          override_reason: null
+          actor: pm
+        sprint:
+          status: passed
+          level: optional
+          decided_at: "2026-11-25T11:45:00+00:00"
+          override_reason: null
+          actor: pm
+        ux:
+          status: passed
+          level: conditional
+          decided_at: "2026-11-25T10:45:00+00:00"
+          override_reason: null
+          actor: pm
+        architecture:
+          status: passed
+          level: conditional
+          decided_at: "2026-11-25T11:00:00+00:00"
+          override_reason: null
+          actor: pm
+      solution:
+        test_design:
+          status: passed
+          level: conditional
+          decided_at: "2026-11-25T13:00:00+00:00"
+          override_reason: null
+          actor: qa
+        framework:
+          status: passed
+          level: conditional
+          decided_at: "2026-11-25T13:30:00+00:00"
+          override_reason: null
+          actor: qa
+        ci:
+          status: passed
+          level: conditional
+          decided_at: "2026-11-25T14:00:00+00:00"
+          override_reason: null
+          actor: qa
+      build: {}
+      verify:
+        trace: {status: open, level: required, decided_at: null, override_reason: null}
+        nfr: {status: open, level: conditional, decided_at: null, override_reason: null}
+        test_review: {status: open, level: conditional, decided_at: null, override_reason: null}
+      close:
+        retro: {status: open, level: optional, decided_at: null, override_reason: null}
+        walkthrough: {status: open, level: optional, decided_at: null, override_reason: null}
+    tickets:
+      "t1":
+        title: "User registration with email verification"
+        gates:
+          ticket:
+            status: passed
+            decided_at: "2026-11-25T14:30:00+00:00"
+            override_reason: null
+            actor: dev
+            evidence: _bmad-output/implementation-artifacts/story-t1-plan.md
+          tests:
+            status: passed
+            decided_at: "2026-11-25T14:45:00+00:00"
+            override_reason: null
+            actor: dev
+            evidence: _bmad-output/test-artifacts/test-run-t1.txt
+          review:
+            status: passed
+            decided_at: "2026-11-25T15:00:00+00:00"
+            override_reason: null
+            actor: qa
+            evidence: _bmad-output/implementation-artifacts/t1-review.md
+          done:
+            status: passed
+            decided_at: "2026-11-25T15:05:00+00:00"
+            override_reason: null
+            actor: qa
+            evidence: _bmad-output/implementation-artifacts/t1-review.md
+      "t2":
+        title: "JWT-based login/logout"
+        gates:
+          ticket:
+            status: passed
+            decided_at: "2026-11-25T14:35:00+00:00"
+            override_reason: null
+            actor: dev
+            evidence: _bmad-output/implementation-artifacts/story-t2-plan.md
+          tests:
+            status: passed
+            decided_at: "2026-11-25T14:50:00+00:00"
+            override_reason: null
+            actor: dev
+            evidence: _bmad-output/test-artifacts/test-run-t2.txt
+          review:
+            status: passed
+            decided_at: "2026-11-25T15:10:00+00:00"
+            override_reason: null
+            actor: qa
+            evidence: _bmad-output/implementation-artifacts/t2-review.md
+          done:
+            status: passed
+            decided_at: "2026-11-25T15:15:00+00:00"
+            override_reason: null
+            actor: qa
+            evidence: _bmad-output/implementation-artifacts/t2-review.md
+      "t3":
+        title: "Create/List projects"
+        gates:
+          ticket:
+            status: passed
+            decided_at: "2026-11-25T14:40:00+00:00"
+            override_reason: null
+            actor: dev
+            evidence: _bmad-output/implementation-artifacts/story-t3-plan.md
+          tests:
+            status: passed
+            decided_at: "2026-11-25T14:55:00+00:00"
+            override_reason: null
+            actor: dev
+            evidence: _bmad-output/test-artifacts/test-run-t3.txt
+          review:
+            status: passed
+            decided_at: "2026-11-25T15:20:00+00:00"
+            override_reason: null
+            actor: qa
+            evidence: _bmad-output/implementation-artifacts/t3-review.md
+          done:
+            status: passed
+            decided_at: "2026-11-25T15:25:00+00:00"
+            override_reason: null
+            actor: qa
+            evidence: _bmad-output/implementation-artifacts/t3-review.md
+      "t4":
+        title: "Kanban board with drag-drop"
+        gates:
+          ticket:
+            status: passed
+            decided_at: "2026-11-25T14:45:00+00:00"
+            override_reason: null
+            actor: dev
+            evidence: _bmad-output/implementation-artifacts/story-t4-plan.md
+          tests:
+            status: passed
+            decided_at: "2026-11-25T15:00:00+00:00"
+            override_reason: null
+            actor: dev
+            evidence: _bmad-output/test-artifacts/test-run-t4.txt
+          review:
+            status: passed
+            decided_at: "2026-11-25T15:30:00+00:00"
+            override_reason: null
+            actor: qa
+            evidence: _bmad-output/implementation-artifacts/t4-review.md
+          done:
+            status: passed
+            decided_at: "2026-11-25T15:35:00+00:00"
+            override_reason: null
+            actor: qa
+            evidence: _bmad-output/implementation-artifacts/t4-review.md
+      "t5":
+        title: "Sprint velocity report"
+        gates:
+          ticket:
+            status: passed
+            decided_at: "2026-11-25T14:50:00+00:00"
+            override_reason: null
+            actor: dev
+            evidence: _bmad-output/implementation-artifacts/story-t5-plan.md
+          tests:
+            status: passed
+            decided_at: "2026-11-25T15:05:00+00:00"
+            override_reason: null
+            actor: dev
+            evidence: _bmad-output/test-artifacts/test-run-t5.txt
+          review:
+            status: passed
+            decided_at: "2026-11-25T15:40:00+00:00"
+            override_reason: null
+            actor: qa
+            evidence: _bmad-output/implementation-artifacts/t5-review.md
+          done:
+            status: passed
+            decided_at: "2026-11-25T15:45:00+00:00"
+            override_reason: null
+            actor: qa
+            evidence: _bmad-output/implementation-artifacts/t5-review.md
+    decisions:
+      - at: "2026-11-25T10:30:00+00:00"
+        decision: "Requirements framed via SPEC.md"
+        reason: "Frame.spec produced complete spec with why, what, constraints, non-goals, success signal"
+      - at: "2026-11-25T10:45:00+00:00"
+        decision: "UX phase passed"
+        reason: "DESIGN.md and EXPERIENCE.md created and aligned"
+      - at: "2026-11-25T11:00:00+00:00"
+        decision: "Architecture phase passed"
+        reason: "Shared decisions documented with trade-offs"
+      - at: "2026-11-25T11:15:00+00:00"
+        decision: "Stories phase passed"
+        reason: "tickets.toml created with epics, stories, tickets"
+      - at: "2026-11-25T11:45:00+00:00"
+        decision: "Sprint phase passed"
+        reason: "Sprint assignments created"
+      - at: "2026-11-25T13:00:00+00:00"
+        decision: "Test design passed"
+        reason: "Risks ranked, coverage targets defined"
+      - at: "2026-11-25T13:30:00+00:00"
+        decision: "Framework passed"
+        reason: "Playwright scaffold created and smoke test passes"
+      - at: "2026-11-25T14:00:00+00:00"
+        decision: "CI passed"
+        reason: "GitHub Actions workflow runs tests on PR"
+      - at: "2026-11-25T14:30:00+00:00"
+        decision: "Ticket T1 built by DEV"
+        reason: "Build plan with Given/When/Then ACs complete"
+      - at: "2026-11-25T14:45:00+00:00"
+        decision: "Ticket T1 tests pass"
+        reason: "All new and existing tests pass"
+      - at: "2026-11-25T15:00:00+00:00"
+        decision: "Ticket T1 reviewed by QA"
+        reason: "Code review findings triaged, in-scope fixed"
+      - at: "2026-11-25T15:05:00+00:00"
+        decision: "Ticket T1 approved done by QA"
+        reason: "Evidence recorded, human approved done transition"
+      - at: "2026-11-25T15:15:00+00:00"
+        decision: "Ticket T2 approved done by QA"
+        reason: "Evidence recorded, human approved done transition"
+      - at: "2026-11-25T15:25:00+00:00"
+        decision: "Ticket T3 approved done by QA"
+        reason: "Evidence recorded, human approved done transition"
+      - at: "2026-11-25T15:35:00+00:00"
+        decision: "Ticket T4 approved done by QA"
+        reason: "Evidence recorded, human approved done transition"
+      - at: "2026-11-25T15:45:00+00:00"
+        decision: "Ticket T5 approved done by QA"
+        reason: "Evidence recorded, human approved done transition"
+    next:
+      phase: verify
+      action: verify.trace
+      skill: bmad-tea
+      reason: "Build phase complete; verify phase starts with traceability"
+    role_override: qa
