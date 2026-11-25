@@ -18,6 +18,7 @@ Subcommands:
   set       Set a scalar/object at a dotted path (optionally under a workstream).
   append    Append a value to a list at a dotted path.
   ticket    Set one per-ticket gate (ticket|tests|review|done).
+  role      Persist, clear, or report the workstream's role selection.
   done      Mark the workstream done once all required gates are decided and
             no gate at any level is blocked.
   migrate   Add gate levels and a tickets map to a pre-v2 ledger.
@@ -59,7 +60,11 @@ try:
 except ImportError:  # pragma: no cover - POSIX
     msvcrt = None  # type: ignore[assignment]
 
-from ruamel.yaml import YAML
+try:  # the CLI always has it; tests import the role resolver without it
+    from ruamel.yaml import YAML
+except ModuleNotFoundError:  # pragma: no cover - CLI path always has ruamel
+    YAML = None  # type: ignore[assignment]
+
 
 SCHEMA = "bmad-sdlc/1"
 PHASES = ("plan", "solution", "build", "verify", "close")
@@ -89,6 +94,7 @@ WORKSTREAM_ROOTS = {
     "tickets",
     "decisions",
     "next",
+    "role_override",
 }
 TRACKS = ("greenfield", "feature", "fix", "audit")
 SIZES = ("trivial", "one-session", "epic", "project")
@@ -323,6 +329,405 @@ def fail(message: str, code: int = 1) -> None:
     emit({"ok": False, "error": message}, code)
 
 
+# --- Roles -----------------------------------------------------------------
+#
+# Role ownership lives in references/role-config.toml, next to this script in
+# the installed skill. That file is the single source: a missing or malformed
+# file fails with JSON naming it, and the script never substitutes a built-in
+# copy.
+
+ROLE_CONFIG_PATH = (
+    Path(__file__).resolve().parents[1] / "references" / "role-config.toml"
+)
+
+# Skill-less conductor actions. They end a workstream or clear a blocked phase;
+# every role may run them, so they carry no owning role (D28/D3).
+CONDUCTOR_ACTIONS = ("close.mark_done",)
+PHASE_UNBLOCK_ACTIONS = tuple(f"{phase}.unblock" for phase in PHASES)
+ROLE_FREE_ACTIONS = frozenset(CONDUCTOR_ACTIONS + PHASE_UNBLOCK_ACTIONS)
+
+# Actions with no gate of their own. Tests derive the full action set from this
+# tuple plus the gate and ticket tables, so a new action without an owner fails.
+SKILL_ACTION_IDS = (
+    "frame.brainstorm",
+    "frame.forge",
+    "frame.research",
+    "frame.brief",
+    "frame.prfaq",
+    "frame.spec",
+    "plan.prd",
+    "build.atdd",
+    "build.auto",
+    "build.loop",
+    "verify.e2e",
+    "verify.automate",
+    "close.correct_course",
+)
+
+# Advisory actions have no phase and no gate. The menu lists them through the
+# role-free branch of the catalog, which is why they must appear in summary.
+ADVISORY_ACTION_IDS = (
+    "advisory.party",
+    "advisory.elicitation",
+    "advisory.review",
+    "advisory.context",
+    "advisory.deep_recon",
+)
+ALL_ACTION_IDS = tuple(
+    dict.fromkeys(
+        list(GATES)
+        + [action for action, _ in GATE_ACTIONS.values()]
+        + [action for action, _ in TICKET_ACTIONS.values()]
+        + list(SKILL_ACTION_IDS)
+        + list(ADVISORY_ACTION_IDS)
+        + list(ROLE_FREE_ACTIONS)
+    )
+)
+# Action ids only: a gate id is not always an action id, so the gate list above
+# must not be offered as actions.
+NON_GATE_ACTION_IDS = tuple(
+    dict.fromkeys(
+        [action for action, _ in GATE_ACTIONS.values()]
+        + [action for action, _ in TICKET_ACTIONS.values()]
+        + list(SKILL_ACTION_IDS)
+        + list(ROLE_FREE_ACTIONS)
+    )
+)
+
+_ROLE_SPEC_KEYS = {"action_prefixes"}
+
+
+class RoleConfigError(ValueError):
+    """A role-config.toml that cannot be used as written."""
+
+
+def validate_role_config(data: dict) -> dict:
+    """Validate the shape once so a broken config fails with a clear message."""
+    if not isinstance(data, dict):
+        raise RoleConfigError("the file must define a TOML table")
+    roles = data.get("roles")
+    if not isinstance(roles, dict) or not roles:
+        raise RoleConfigError("it defines no [roles]")
+    for name, spec in roles.items():
+        if not isinstance(name, str) or not name:
+            raise RoleConfigError("every role needs a string name")
+        if not isinstance(spec, dict):
+            raise RoleConfigError(f"roles.{name} must be a table")
+        unknown = sorted(set(spec) - _ROLE_SPEC_KEYS)
+        if unknown:
+            raise RoleConfigError(
+                f"roles.{name} has unknown keys: {', '.join(unknown)}; "
+                "phase ownership lives in [phase_roles], not roles.*.phases"
+            )
+        prefixes = spec.get("action_prefixes")
+        if (
+            not isinstance(prefixes, list)
+            or not prefixes
+            or not all(isinstance(prefix, str) and prefix for prefix in prefixes)
+        ):
+            raise RoleConfigError(
+                f"roles.{name}.action_prefixes must be a non-empty string array"
+            )
+    for table in ("phase_roles", "track_roles", "track_action_overrides"):
+        mapping = data.get(table) or {}
+        if not isinstance(mapping, dict):
+            raise RoleConfigError(f"[{table}] must be a table")
+        for key, owner in mapping.items():
+            if not isinstance(key, str) or not key:
+                raise RoleConfigError(f"[{table}] has a non-string key")
+            if owner not in roles:
+                raise RoleConfigError(
+                    f"[{table}] maps {key!r} to unknown role {owner!r}"
+                )
+    phase_roles = data.get("phase_roles") or {}
+    for phase in phase_roles:
+        if phase not in PHASES:
+            raise RoleConfigError(
+                f"[phase_roles] names unknown phase {phase!r}; "
+                f"choose one of {', '.join(PHASES)}"
+            )
+    for key in (data.get("track_roles") or {}):
+        if key not in TRACKS:
+            raise RoleConfigError(
+                f"[track_roles] names unknown track {key!r}; "
+                "choose one of " + ", ".join(TRACKS)
+            )
+    for key in (data.get("track_action_overrides") or {}):
+        track = key.split(".", 1)[0]
+        if track not in TRACKS:
+            raise RoleConfigError(
+                f"[track_action_overrides] key {key!r} must start with a track: "
+                + ", ".join(TRACKS)
+            )
+    advisory = data.get("advisory") or {}
+    if not isinstance(advisory, dict):
+        raise RoleConfigError("[advisory] must be a table")
+    prefix = advisory.get("prefix")
+    if prefix is not None and (not isinstance(prefix, str) or not prefix):
+        raise RoleConfigError("[advisory] prefix must be a non-empty string")
+    return data
+
+
+@functools.lru_cache(maxsize=1)
+def role_config() -> dict:
+    """Load and validate role-config.toml once; the file is required."""
+    try:
+        with ROLE_CONFIG_PATH.open("rb") as handle:
+            data = tomllib.load(handle)
+    except FileNotFoundError:
+        fail(
+            f"role config not found: {ROLE_CONFIG_PATH}; the installed skill is "
+            "incomplete, so role ownership cannot be resolved"
+        )
+        raise  # unreachable; fail() exits
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        fail(f"invalid role config {ROLE_CONFIG_PATH}: {exc}")
+        raise  # unreachable; fail() exits
+    try:
+        return validate_role_config(data)
+    except RoleConfigError as exc:
+        fail(f"invalid role config {ROLE_CONFIG_PATH}: {exc}")
+        raise  # unreachable; fail() exits
+
+
+def role_names() -> tuple[str, ...]:
+    return tuple(role_config().get("roles") or {})
+
+
+def role_is_free(action: str | None, config: dict | None = None) -> bool:
+    """True when every role may run the action (no owning role)."""
+    if not action:
+        return False
+    if action in ROLE_FREE_ACTIONS:
+        return True
+    prefix = ((config or role_config()).get("advisory") or {}).get("prefix")
+    return bool(prefix and action.startswith(prefix))
+
+
+def role_for_phase(phase: str | None, track: str | None) -> str | None:
+    """Role that owns a phase; a track override wins over [phase_roles]."""
+    config = role_config()
+    if track:
+        role = (config.get("track_roles") or {}).get(track)
+        if role:
+            return role
+    if phase:
+        return (config.get("phase_roles") or {}).get(phase)
+    return None
+
+
+def role_for_action(action: str | None, track: str | None) -> str | None:
+    """Role that owns an action; track override, then longest prefix.
+
+    Status-like ids (`plan.requirements`, `build.review`) are action ids too, so
+    the same table resolves gate ownership. Role-free actions return None.
+    """
+    if not action:
+        return None
+    config = role_config()
+    if role_is_free(action, config):
+        return None
+    if track:
+        override = (config.get("track_action_overrides") or {}).get(
+            f"{track}.{action}"
+        )
+        if override:
+            return override
+    best: tuple[int, str] | None = None
+    for name, spec in (config.get("roles") or {}).items():
+        for prefix in spec.get("action_prefixes") or ():
+            if action.startswith(prefix):
+                rank = len(prefix)
+                if best is None or rank > best[0]:
+                    best = (rank, name)
+    return best[1] if best else None
+
+
+def role_allows(action: str | None, role: str, track: str | None) -> bool:
+    """Role-free (conductor and advisory) actions are open to every role."""
+    if not action:
+        return True
+    if role_is_free(action):
+        return True
+    return role_for_action(action, track) == role
+
+
+def normalize_role(value: str | None) -> str | None:
+    """Lowercase a supplied role and reject an unknown one with JSON."""
+    if value is None:
+        return None
+    role = str(value).strip().lower()
+    if not role:
+        return None
+    names = role_names()
+    if role not in names:
+        fail(
+            f"unknown role {value!r}; choose one of " + ", ".join(names)
+        )
+    return role
+
+
+def resolve_current_role(
+    explicit: str | None,
+    phase: str | None,
+    track: str | None,
+    override: str | None = None,
+) -> tuple[str, str]:
+    """Return (role, source) for the active position.
+
+    Source order: an explicit --role, a persisted role_override, a track
+    override, the phase mapping, then the pm default. Callers report the source
+    so a surprising role is visible.
+    """
+    config = role_config()
+    if explicit:
+        return explicit, "explicit"
+    if override:
+        # A hand-edited or renamed role must not silently disable every
+        # action; normalize_role fails with JSON naming the valid roles.
+        return normalize_role(override) or "pm", "override"
+    if track and (config.get("track_roles") or {}).get(track):
+        return role_for_phase(phase, track) or "pm", "track"
+    if phase and (config.get("phase_roles") or {}).get(phase):
+        return role_for_phase(phase, track) or "pm", "phase"
+    return "pm", "default"
+
+
+def assert_phase_mapped(
+    phase: str | None, track: str | None, config: dict
+) -> None:
+    """An unmapped phase is a config error, never a silent pm default."""
+    if not phase or phase not in PHASES:
+        return
+    if track and (config.get("track_roles") or {}).get(track):
+        return
+    if phase not in (config.get("phase_roles") or {}):
+        fail(
+            f"phase {phase!r} has no [phase_roles] entry in "
+            f"{ROLE_CONFIG_PATH}; add one or map its track in [track_roles]"
+        )
+
+
+def annotate_role(
+    entry: dict, track: str | None, current_role: str, config: dict
+) -> None:
+    """Attach role, role_allowed, and role_free to an action entry."""
+    action = entry.get("action")
+    if role_is_free(action, config):
+        entry["role"] = None
+        entry["role_free"] = True
+        entry["role_allowed"] = True
+        return
+    owner = role_for_action(action, track)
+    if owner is None:
+        fail(
+            f"no role owns action {action!r}; add an action_prefix or a "
+            f"[track_action_overrides] entry to {ROLE_CONFIG_PATH}"
+        )
+    entry["role"] = owner
+    entry["role_allowed"] = owner == current_role
+
+
+def annotate_role_optional(
+    entry: dict, track: str | None, current_role: str, config: dict
+) -> None:
+    """Annotate an entry, tolerating a legacy action no role claims.
+
+    `next_action` fails loudly on an unowned action because it is about to be
+    run. A catalog or a dashboard row can still report the entry; it shows
+    `role: null` and `role_allowed: false` so no role treats it as takeable.
+    """
+    action = entry.get("action")
+    if role_is_free(action, config) or role_for_action(action, track) is not None:
+        annotate_role(entry, track, current_role, config)
+        return
+    entry["role"] = None
+    entry["role_allowed"] = False
+
+
+def explicit_acting_role(args: argparse.Namespace) -> str | None:
+    """The explicitly attested role, or None when the session role is used.
+
+    `--as` is an identity switch, not a convenience: an unattested switch lets
+    one session build, review, and approve the same ticket. Every explicit
+    switch therefore needs a recorded reason, like a foreign-role decision.
+    """
+    explicit = normalize_role(getattr(args, "as_role", None))
+    if explicit and not str(getattr(args, "reason", "") or "").strip():
+        fail(f"--as {explicit} needs --reason to attest the role switch")
+    return explicit
+
+
+def acting_role(
+    args: argparse.Namespace, workstream: dict, track: str | None
+) -> str:
+    """The role that writes a gate: --as, else the resolved current role."""
+    explicit = explicit_acting_role(args)
+    if explicit:
+        return explicit
+    role, _ = resolve_current_role(
+        None,
+        workstream.get("current_phase"),
+        track,
+        workstream.get("role_override"),
+    )
+    return role
+
+
+def guard_gate_actor(
+    args: argparse.Namespace,
+    actor: str,
+    gate_action: str,
+    track: str | None,
+) -> None:
+    """A foreign owner may decide a gate only with a recorded reason."""
+    if role_is_free(gate_action):
+        return
+    owner = role_for_action(gate_action, track)
+    if owner is None:
+        fail(
+            f"no role owns gate {gate_action!r}; add an action_prefix or a "
+            f"[track_action_overrides] entry to {ROLE_CONFIG_PATH}"
+        )
+    if actor == owner:
+        return
+    if not str(getattr(args, "reason", "") or "").strip():
+        fail(
+            f"gate {gate_action} belongs to {owner}; {actor} needs --reason "
+            "to record a foreign-role decision"
+        )
+
+
+def guard_self_approval(
+    workstream: dict,
+    ticket_id: str,
+    gate_name: str,
+    status: str | None,
+    actor: str | None,
+) -> None:
+    """One role must not build, review, and approve the same ticket.
+
+    The builder is the role recorded on the ticket's `build.ticket` gate. A
+    review or done decision by that same role is refused; the ledger records
+    the actor so `validate` and a later reviewer can see who decided what.
+    """
+    if not actor or status not in ("passed", "overridden"):
+        return
+    if gate_name not in ("review", "done"):
+        return
+    if str(workstream.get("track") or "") == "audit":
+        # An audit never builds the ticket it reviews.
+        return
+    ticket = (workstream.get("tickets") or {}).get(ticket_id) or {}
+    built = ((ticket.get("gates") or {}).get("ticket")) or {}
+    builder = built.get("actor") if isinstance(built, dict) else None
+    if builder and builder == actor:
+        fail(
+            f"build.{ticket_id}.ticket was decided by {builder}; another role "
+            f"must decide build.{ticket_id}.{gate_name}"
+        )
+
+
 @contextlib.contextmanager
 def file_lock(path: Path):
     """Serialize read-modify-write cycles for a ledger or audit trail.
@@ -481,6 +886,11 @@ def _is_doc_path(path: str) -> bool:
 
 
 def _yaml() -> YAML:
+    if YAML is None:  # pragma: no cover - CLI path always has ruamel
+        fail(
+            "ruamel.yaml is not installed; run the helper with "
+            "`uv run --no-cache <script>` so the PEP 723 dependency is available"
+        )
     yaml = YAML(typ="rt")
     yaml.preserve_quotes = True
     yaml.indent(mapping=2, sequence=4, offset=2)
@@ -639,6 +1049,21 @@ def resolve_paths(project_root: Path) -> dict[str, str]:
             candidate = project_root / candidate
         resolved[key] = str(candidate)
     return resolved
+
+
+def _require_valid_config(project_root: Path) -> dict[str, str]:
+    """Resolve artifact folders, refusing a malformed config.
+
+    `init` already refuses; a later `done` or `reconcile` must not fall back to
+    default folders against a config the user is still fixing.
+    """
+    paths = resolve_paths(project_root)
+    if _CONFIG_ERRORS:
+        fail(
+            "malformed BMAD config; fix it before continuing: "
+            + "; ".join(_CONFIG_ERRORS)
+        )
+    return paths
 
 
 def project_relative(value: str, project_root: Path) -> str:
@@ -1255,11 +1680,13 @@ def default_workstream(name: str, track: str, size: str, stamp: str, model: str)
                     "status": "skipped",
                     "decided_at": stamp,
                     "override_reason": None,
+                    "actor": "qa",
                 },
                 "tests": {
                     "status": "skipped",
                     "decided_at": stamp,
                     "override_reason": None,
+                    "actor": "qa",
                 },
                 "review": {
                     "status": "open",
@@ -1270,6 +1697,7 @@ def default_workstream(name: str, track: str, size: str, stamp: str, model: str)
                     "status": "skipped",
                     "decided_at": stamp,
                     "override_reason": None,
+                    "actor": "qa",
                 },
             },
         }
@@ -1643,6 +2071,69 @@ def phase_blocking(entries: list[dict]) -> list[dict]:
     return blocking
 
 
+# An action id's first segment names the phase it belongs to, except the
+# framing actions, which all live in Plan.
+ACTION_PHASES = {
+    "frame": "plan",
+    "plan": "plan",
+    "solution": "solution",
+    "build": "build",
+    "verify": "verify",
+    "close": "close",
+}
+
+# Gateless actions that satisfy a gate anyway (phase-map.md §Plan phase).
+ACTION_GATE = {
+    "frame.spec": "plan.requirements",
+    "plan.prd": "plan.requirements",
+}
+
+
+def action_catalog(
+    workstream: dict,
+    track: str,
+    size: str,
+    model: str,
+    current_role: str,
+    config: dict,
+) -> list[dict]:
+    """Every action of every phase with its owner, for menu filtering.
+
+    The menu needs `role` for the gateless actions too (frame.*, build.atdd,
+    verify.e2e, close.correct_course), which never reach the gate path, so
+    `next_action` and `optional_actions` alone cannot describe it.
+    """
+    catalog: list[dict] = []
+    seen: set[tuple[str, str | None]] = set()
+
+    def add(phase: str | None, action: str, gate: str | None, ticket: str | None) -> None:
+        key = (action, ticket)
+        if key in seen:
+            return
+        seen.add(key)
+        catalog.append(
+            {"phase": phase, "action": action, "gate": gate, "ticket": ticket}
+        )
+
+    for action_id in ADVISORY_ACTION_IDS:
+        add(None, action_id, None, None)
+    for phase in PHASES:
+        for entry in phase_gate_entries(workstream, phase, track, size, model):
+            action = action_for_gate(entry["id"], track, size, model)
+            add(phase, action["action"], entry["id"], action.get("ticket"))
+        if phase == "build" and not (workstream.get("tickets") or {}):
+            # An unbuilt build phase still offers the ticket action; its gate
+            # is the ticket the user supplies.
+            add("build", "build.ticket", "build.ticket", None)
+        for action_id in NON_GATE_ACTION_IDS:
+            if ACTION_PHASES.get(action_id.split(".", 1)[0]) != phase:
+                continue
+            add(phase, action_id, ACTION_GATE.get(action_id), None)
+    for entry in catalog:
+        annotate_role_optional(entry, track, current_role, config)
+    return catalog
+
+
 def optional_actions(
     workstream: dict, track: str, size: str, model: str
 ) -> list[dict]:
@@ -1706,9 +2197,11 @@ def computed_next(
         next_gate = first_blocking(entries)
         if next_gate:
             result = action_for_gate(next_gate["id"], track, size, model)
-            state = "blocked" if next_gate["status"] == "blocked" else "open"
-            if next_gate["status"] == "skipped":
-                state = "skipped without a reason"
+            state = {
+                "blocked": "blocked",
+                "skipped": "skipped without a reason",
+                "overridden": "overridden without a reason",
+            }.get(next_gate["status"], "open")
             result["reason"] = (
                 f"{next_gate['id']} is a {next_gate['level']} {state} gate."
             )
@@ -1862,10 +2355,22 @@ def cmd_init(args: argparse.Namespace) -> None:
     stamp = now_iso()
     reset_from = None
     previous_data = None
+    if args.force and not str(args.reason or "").strip():
+        fail("--force requires --reason")
     if args.force and ledger_path.exists():
-        if not str(args.reason or "").strip():
-            fail("--force requires --reason")
+        # Rotate the backup: a retry must not overwrite the only copy of the
+        # ledger the first reset replaced. The base name stays for the first
+        # reset so the documented restore path keeps working.
         backup = ledger_path.with_name(ledger_path.name + ".bak")
+        if backup.exists():
+            token = datetime.now().strftime("%Y%m%dT%H%M%S")
+            backup = ledger_path.with_name(f"{ledger_path.name}.{token}.bak")
+            index = 2
+            while backup.exists():
+                backup = ledger_path.with_name(
+                    f"{ledger_path.name}.{token}-{index}.bak"
+                )
+                index += 1
         atomic_write_text(backup, ledger_path.read_text(encoding="utf-8"))
         reset_from = backup
         # A corrupt ledger is the main reason to run --force, so this read
@@ -1893,16 +2398,24 @@ def cmd_init(args: argparse.Namespace) -> None:
             "refusing to downgrade the confirmed BMAD model to unknown; "
             "pass --force --reason to reset it"
         )
-    if args.model:
-        model = args.model
-    elif existing and detection["model"] == "unknown" and current_model in (
-        "v6",
-        "current",
-    ):
-        # Never downgrade a user-confirmed model because detection is silent.
+    if existing and current_model in ("v6", "current"):
+        # `init` on an existing ledger appends a workstream. Changing the
+        # model here would run a document-wide migration that fails on any
+        # paused or done sibling; the model change belongs to `set`.
+        if args.model and args.model != current_model:
+            fail(
+                "init appends a workstream; change the model first with "
+                f"set --path bmad.model --value {args.model} --reason <why>"
+            )
         model = current_model
+    elif existing and args.model:
+        model = args.model
+    elif existing and current_model == "unknown":
+        # An unresolved model stays unresolved until the user supplies one;
+        # detection must not silently change a sibling workstream's levels.
+        model = "unknown"
     else:
-        model = detection["model"]
+        model = args.model or detection["model"]
     model_drift = bool(
         existing
         and current_model in ("v6", "current")
@@ -1954,31 +2467,10 @@ def cmd_init(args: argparse.Namespace) -> None:
                 "init --force --reason to reset it"
             )
         workstreams = {}
-    if existing and model != current_model:
-        # Derived levels must follow the recorded model, including when an
-        # older workstream was created under the previous model. A phase the
-        # new model reopens is a lifecycle change and needs a reason.
-        reopened: list[str] = []
-        for other_id, other in workstreams.items():
-            if not isinstance(other, dict):
-                continue
-            if str(other.get("status") or "active") in ("done", "paused"):
-                fail(
-                    f"workstream {other_id} is {other.get('status')}; reopen "
-                    "it before changing the model"
-                )
-            for entry in apply_levels(other, model):
-                if entry.startswith("phases.") and entry.endswith(
-                    ".status->pending"
-                ):
-                    reopened.append(f"{other_id}.{entry}")
-            refresh_workstream(other, model)
-        if reopened and not str(getattr(args, "reason", "") or "").strip():
-            fail(
-                "changing the model reopens "
-                + ", ".join(reopened)
-                + "; pass --reason to record why"
-            )
+    # Derived levels on an appended workstream follow the resolved model. Older
+    # workstreams keep the levels they were recorded with: a model change is a
+    # lifecycle decision that `set --path bmad.model` (or `migrate`) records,
+    # not a side effect of adding a workstream.
     workstream_id = args.workstream or next_workstream_id(workstreams)
     if workstream_id in workstreams:
         fail(f"workstream already exists: {workstream_id}")
@@ -1986,6 +2478,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     for other_id, other in workstreams.items():
         if isinstance(other, dict) and other.get("status") == "active":
             other["status"] = "paused"
+            other["updated"] = stamp
             paused.append(other_id)
     workstream = default_workstream(args.name, track, size, stamp, model)
     refresh_workstream(workstream, model)
@@ -2135,6 +2628,15 @@ def cmd_validate(args: argparse.Namespace) -> None:
             errors.append(f"{label}.status must be one of {', '.join(WS_STATUSES)}")
         if workstream.get("current_phase") not in PHASES:
             errors.append(f"{label}.current_phase must be one of {', '.join(PHASES)}")
+        if workstream.get("role_override") is not None:
+            if not isinstance(workstream.get("role_override"), str):
+                errors.append(f"{label}.role_override must be a string or null")
+            elif workstream["role_override"] not in role_names():
+                errors.append(
+                    f"{label}.role_override is {workstream['role_override']!r}, "
+                    "which is not a role in role-config.toml; choose one of "
+                    + ", ".join(role_names())
+                )
         if not isinstance(workstream.get("artifacts"), dict):
             errors.append(f"{label}.artifacts must be a mapping")
         else:
@@ -2255,6 +2757,17 @@ def cmd_validate(args: argparse.Namespace) -> None:
                             f"{label}.gates.{phase}.{name} is decided without "
                             "decided_at"
                         )
+                    if node.get("status") in (
+                        "passed",
+                        "overridden",
+                        "skipped",
+                    ) and not node.get("actor"):
+                        # Without an actor the self-approval audit cannot run;
+                        # a single deleted line must not disable it.
+                        errors.append(
+                            f"{label}.gates.{phase}.{name} is decided without "
+                            "an actor"
+                        )
                     level = node.get("level")
                     if level is None:
                         warnings.append(
@@ -2285,6 +2798,14 @@ def cmd_validate(args: argparse.Namespace) -> None:
                         errors.append(
                             f"{label}.gates.{phase}.{name} is "
                             f"{node.get('status')} without an override_reason"
+                        )
+                    if (
+                        node.get("status") == "skipped"
+                        and level in ("required", "conditional")
+                    ):
+                        errors.append(
+                            f"{label}.gates.{phase}.{name} is skipped but is "
+                            f"{level}; use overridden to decline it"
                         )
                 for name in phase_gates:
                     if name not in GATE_NAMES[phase]:
@@ -2358,6 +2879,15 @@ def cmd_validate(args: argparse.Namespace) -> None:
                             f"{tlabel}.gates.{gate_name} is decided without "
                             "decided_at"
                         )
+                    if node.get("status") in (
+                        "passed",
+                        "overridden",
+                        "skipped",
+                    ) and not node.get("actor"):
+                        errors.append(
+                            f"{tlabel}.gates.{gate_name} is decided without "
+                            "an actor; run migrate to backfill it"
+                        )
                     if (
                         node.get("status") == "overridden"
                         and ticket_level_map.get(gate_name, "optional")
@@ -2373,6 +2903,16 @@ def cmd_validate(args: argparse.Namespace) -> None:
                             f"{tlabel}.gates.{gate_name} is "
                             f"{node.get('status')} without an override_reason"
                         )
+                    if (
+                        node.get("status") == "skipped"
+                        and ticket_level_map.get(gate_name, "optional")
+                        in ("required", "conditional")
+                    ):
+                        errors.append(
+                            f"{tlabel}.gates.{gate_name} is skipped but is "
+                            f"{ticket_level_map.get(gate_name)}; use "
+                            "overridden to decline it"
+                        )
                 if statuses["done"] in ("passed", "overridden") and statuses["review"] != "passed":
                     errors.append(
                         f"{tlabel}.gates.done is decided before build.review "
@@ -2387,6 +2927,25 @@ def cmd_validate(args: argparse.Namespace) -> None:
                         f"{tlabel}.gates.review is decided before build.ticket "
                         "is passed"
                     )
+                builder = (
+                    ticket_gates.get("ticket")
+                    if isinstance(ticket_gates.get("ticket"), dict)
+                    else {}
+                ).get("actor")
+                if track != "audit" and builder:
+                    for gate_name in ("review", "done"):
+                        node = ticket_gates.get(gate_name)
+                        if (
+                            statuses[gate_name] in ("passed", "overridden")
+                            and isinstance(node, dict)
+                            and node.get("actor") == builder
+                        ):
+                            errors.append(
+                                f"{tlabel}.gates.{gate_name} was decided by "
+                                f"{builder}, the role that decided "
+                                f"{tlabel}.gates.ticket; another role must "
+                                "review and approve it"
+                            )
             if track == "audit":
                 audit_ticket = tickets.get("audit")
                 if not isinstance(audit_ticket, dict):
@@ -2434,12 +2993,24 @@ def cmd_validate(args: argparse.Namespace) -> None:
 
 
 def workstream_briefs(workstreams: dict, model: str) -> list[dict]:
+    config = role_config()
     briefs = []
     for workstream_id, workstream in workstreams.items():
         if not isinstance(workstream, dict):
             continue
         track = workstream.get("track", "feature")
         size = workstream.get("size", "epic")
+        phase = workstream.get("current_phase")
+        role, role_source = resolve_current_role(
+            None, phase, track, workstream.get("role_override")
+        )
+        next_action = computed_next(workstream, track, size, model)
+        if next_action is not None:
+            # The dashboard renders another workstream's next action, so it
+            # needs the same role annotations the active one carries. A raw
+            # dict would read as "not blocked" to any role.
+            next_action = dict(next_action)
+            annotate_role_optional(next_action, track, role, config)
         briefs.append(
             {
                 "id": workstream_id,
@@ -2447,8 +3018,11 @@ def workstream_briefs(workstreams: dict, model: str) -> list[dict]:
                 "track": track,
                 "size": size,
                 "status": workstream.get("status"),
-                "current_phase": workstream.get("current_phase"),
-                "next_action": computed_next(workstream, track, size, model),
+                "current_phase": phase,
+                "role": role,
+                "role_source": role_source,
+                "role_override": workstream.get("role_override"),
+                "next_action": next_action,
             }
         )
     return briefs
@@ -2465,12 +3039,73 @@ def empty_ticket_summary() -> dict:
     }
 
 
+@plan_locked
+def cmd_role(args: argparse.Namespace) -> None:
+    """Persist, clear, or report the workstream's role selection."""
+    path = _plan_path(args)
+    data = load_plan(path)
+    workstream_id, workstream = workstream_root(data, args.workstream)
+    status = str(workstream.get("status") or "active")
+    if status == "done":
+        fail("workstream is done; start a new workstream to change its role")
+    if status == "paused":
+        fail("workstream is paused; resume it before changing its role")
+    role = normalize_role(args.role)
+    if args.clear:
+        if role:
+            fail("--clear cannot be combined with --role")
+        workstream.pop("role_override", None)
+        action = "cleared"
+    else:
+        if not role:
+            fail("pass --role pm|dev|qa or --clear")
+        if not str(args.reason or "").strip():
+            fail("changing the role needs --reason")
+        workstream["role_override"] = role
+        action = f"set to {role}"
+    data["updated"] = now_iso()
+    save_plan(path, data)
+    memlog = append_memlog(
+        resolve_memlog(data, args, path),
+        "event",
+        f"{workstream_id} role {action}"
+        + (f" (reason: {args.reason})" if args.reason else ""),
+    )
+    current_role, role_source = resolve_current_role(
+        None,
+        workstream.get("current_phase"),
+        workstream.get("track", "feature"),
+        workstream.get("role_override"),
+    )
+    emit(
+        {
+            "ok": True,
+            "ledger": str(path),
+            "workstream": workstream_id,
+            "role": workstream.get("role_override"),
+            "current_role": current_role,
+            "role_source": role_source,
+            "memlog": str(memlog),
+        }
+    )
+
+
 def cmd_summary(args: argparse.Namespace) -> None:
+    if getattr(args, "project_root", None):
+        # A mistyped --project-root would otherwise report every skill as
+        # missing, which is indistinguishable from a broken install.
+        given_root = Path(
+            expand_project_root(args.project_root, Path.cwd())
+        ).resolve()
+        if not given_root.is_dir():
+            fail(f"project root not found: {given_root}")
     path = _plan_path(args)
     data = load_plan(path)
     model = bmad_map(data).get("model") or "unknown"
     workstreams = data.get("workstreams") or {}
     memlog = resolve_memlog(data, args, path)
+    config = role_config()
+    explicit = normalize_role(getattr(args, "role", None))
     workstream_id = args.workstream or data.get("active_workstream")
     if not workstream_id:
         briefs = workstream_briefs(workstreams, model)
@@ -2479,6 +3114,7 @@ def cmd_summary(args: argparse.Namespace) -> None:
         # was inserted last: the headless block says "the last recorded
         # track/size/phase", and a paused newer workstream is not that.
         last = briefs[-1] if briefs else None
+        latest: dict = {}
         if workstreams:
             latest_id = max(
                 workstreams,
@@ -2492,6 +3128,12 @@ def cmd_summary(args: argparse.Namespace) -> None:
                 "size": latest.get("size"),
                 "current_phase": latest.get("current_phase"),
             }
+        last_phase = last.get("current_phase") if last else None
+        last_track = last.get("track") if last else None
+        assert_phase_mapped(last_phase, last_track, config)
+        current_role, role_source = resolve_current_role(
+            explicit, last_phase, last_track, latest.get("role_override")
+        )
         emit(
             {
                 "ok": True,
@@ -2499,6 +3141,8 @@ def cmd_summary(args: argparse.Namespace) -> None:
                 "memlog": str(memlog),
                 "project": data.get("project"),
                 "model": model,
+                "current_role": current_role,
+                "role_source": role_source,
                 "active_workstream": None,
                 "workstream": None,
                 # A closed workstream clears active_workstream; keep the last
@@ -2514,8 +3158,9 @@ def cmd_summary(args: argparse.Namespace) -> None:
                 "optional_open": [],
                 "locked_phases": [],
                 "optional_actions": [],
+                "actions": [],
                 "next_phase": None,
-                "phase": last.get("current_phase") if last else None,
+                "phase": last_phase,
                 "next_action": None,
                 "cached_next_action": None,
                 "next_action_stale": False,
@@ -2530,6 +3175,8 @@ def cmd_summary(args: argparse.Namespace) -> None:
     workstream = workstreams[workstream_id]
     track = workstream.get("track", "feature")
     size = workstream.get("size", "epic")
+    stored_phase = workstream.get("current_phase")
+    assert_phase_mapped(stored_phase, track, config)
 
     phases: list[dict] = []
     open_gates: list[str] = []
@@ -2590,6 +3237,7 @@ def cmd_summary(args: argparse.Namespace) -> None:
         phases.append(
             {
                 "phase": phase,
+                "role": role_for_phase(phase, track),
                 "status": status,
                 "gate": node.get("gate") or PHASE_DEFAULT_GATE[phase],
                 "evidence": node.get("evidence") or [],
@@ -2709,7 +3357,20 @@ def cmd_summary(args: argparse.Namespace) -> None:
             if phase["status"] not in ("done", "skipped") or phase["blocking"]:
                 next_phase = phase["phase"]
                 break
-    display_phase = next_phase or workstream.get("current_phase")
+    display_phase = next_phase or stored_phase
+    # The role follows the workstream's stored phase, not the recommended next
+    # phase: the recommended action can look one phase ahead while the
+    # workstream still sits in the phase that owns it.
+    current_role, role_source = resolve_current_role(
+        explicit,
+        stored_phase,
+        track,
+        workstream.get("role_override"),
+    )
+    if next_action is not None:
+        annotate_role(next_action, track, current_role, config)
+    for entry in optional:
+        annotate_role(entry, track, current_role, config)
     emit(
         {
             "ok": True,
@@ -2717,6 +3378,8 @@ def cmd_summary(args: argparse.Namespace) -> None:
             "memlog": str(memlog),
             "project": data.get("project"),
             "model": model,
+            "current_role": current_role,
+            "role_source": role_source,
             "active_workstream": data.get("active_workstream"),
             "workstream": {
                 "id": workstream_id,
@@ -2724,7 +3387,9 @@ def cmd_summary(args: argparse.Namespace) -> None:
                 "track": track,
                 "size": size,
                 "status": workstream.get("status"),
-                "current_phase": display_phase,
+                "current_phase": stored_phase,
+                "role_override": workstream.get("role_override"),
+                "role": role_for_phase(stored_phase, track),
                 "artifacts": artifacts,
             },
             "phases": phases,
@@ -2736,6 +3401,9 @@ def cmd_summary(args: argparse.Namespace) -> None:
             "optional_open": optional_open,
             "locked_phases": locked_phases,
             "optional_actions": optional,
+            "actions": action_catalog(
+                workstream, track, size, model, current_role, config
+            ),
             "next_phase": next_phase,
             "phase": display_phase,
             "next_action": next_action,
@@ -2886,7 +3554,10 @@ def _validate_path(path: str, ticket_map: dict | None = None) -> None:
                 f"on ticket {ticket_id}"
             )
         if len(rest) < 2 or rest[1] not in TICKET_GATES:
-            fail(f"unknown ticket gate in path: {path}")
+            fail(
+                f"unknown ticket gate in path: {path}; choose one of "
+                + ", ".join(TICKET_GATES)
+            )
         if len(rest) > 3 or (
             len(rest) == 3
             and rest[2]
@@ -2915,6 +3586,8 @@ def _validate_path(path: str, ticket_map: dict | None = None) -> None:
     elif root in ("name", "track", "size", "status", "started"):
         if len(parts) != 1:
             fail(f"path is too deep: {path}")
+    elif root == "role_override":
+        fail("the role is set with the role command, not set --path")
     elif root == "decisions":
         if len(parts) != 1:
             fail(f"path is too deep: {path}")
@@ -2992,6 +3665,9 @@ def _validate_value(path: str, value, ticket_map: dict | None = None) -> None:
                 f"unknown phase status {value!r}; choose one of "
                 + ", ".join(PHASE_STATUSES)
             )
+    elif parts and parts[0] == "phases" and len(parts) == 3 and parts[2] == "evidence":
+        if not isinstance(value, list):
+            fail("phase evidence must be a JSON list of path strings")
     elif parts and parts[0] == "phases" and len(parts) == 2:
         status = value.get("status")
         if status is not None and status not in PHASE_STATUSES:
@@ -3175,7 +3851,7 @@ def _guard_ticket_order(workstream: dict, path: str, value) -> None:
 
 
 def _guard_ticket_node(
-    root: dict, path: str, value, reason: str | None
+    root: dict, path: str, value, reason: str | None, actor: str | None = None
 ) -> None:
     """Apply the gate guards to every gate inside a whole-ticket replacement."""
     parts = _parts(path)
@@ -3203,14 +3879,65 @@ def _guard_ticket_node(
                 f"cannot drop decided gate {ticket_id}.{gate_name} by replacing "
                 "the ticket; reopen it with --reason first"
             )
+    # Who decided each gate: an unchanged decision keeps its recorded actor,
+    # a new one belongs to the role performing this replacement.
     for gate_name, new_node in new_gates.items():
         if not isinstance(new_node, dict):
             continue
+        new_node.pop("actor", None)
+        old_node = existing.get(gate_name)
+        old_status = old_node.get("status") if isinstance(old_node, dict) else None
+        if new_node.get("status") in ("passed", "overridden", "skipped"):
+            if (
+                new_node.get("status") == old_status
+                and isinstance(old_node, dict)
+                and old_node.get("actor")
+            ):
+                new_node["actor"] = old_node["actor"]
+            else:
+                new_node["actor"] = actor
+    # The builder is the role on the ticket gate after this replacement.
+    built = new_gates.get("ticket")
+    builder: str | None = None
+    if isinstance(built, dict) and built.get("status") in (
+        "passed",
+        "overridden",
+        "skipped",
+    ):
+        builder = built.get("actor") or actor
+    elif isinstance(existing.get("ticket"), dict):
+        builder = existing["ticket"].get("actor")
+    for gate_name, new_node in new_gates.items():
+        if not isinstance(new_node, dict):
+            continue
+        if (
+            actor
+            and builder == actor
+            and gate_name in ("review", "done")
+            and new_node.get("status") in ("passed", "overridden")
+            and str(root.get("track") or "") != "audit"
+        ):
+            fail(
+                f"build.{ticket_id}.ticket was decided by {builder}; another "
+                f"role must decide build.{ticket_id}.{gate_name}"
+            )
         old_node = existing.get(gate_name)
         synthetic = f"tickets.{ticket_id}.gates.{gate_name}"
         _guard_blocked_gate(root, synthetic, new_node)
         _guard_reopen(root, synthetic, new_node, reason)
         new_status = new_node.get("status")
+        if (
+            new_status == "skipped"
+            and ticket_levels(
+                str(root.get("track") or "feature"),
+                str(root.get("size") or "epic"),
+            ).get(gate_name)
+            in ("required", "conditional")
+        ):
+            fail(
+                f"ticket gate {gate_name} is required or conditional; use "
+                "`overridden` to decline it (skipped is for optional gates)"
+            )
         if new_status in ("passed", "overridden"):
             new_statuses = {}
             for name in TICKET_GATES:
@@ -3611,6 +4338,22 @@ def cmd_set(args: argparse.Namespace) -> None:
             "--value active --reason <why>"
         )
     written = _written_gate(args.path, value)
+    gate_actor = None
+    if written is not None and scope_id is not None:
+        gate_action = (
+            f"build.{written[2]}"
+            if written[0] == "ticket"
+            else f"{written[1]}.{written[2]}"
+        )
+        gate_actor = acting_role(args, root, root.get("track", "feature"))
+        if written[3] in ("passed", "overridden", "skipped"):
+            guard_gate_actor(
+                args, gate_actor, gate_action, root.get("track", "feature")
+            )
+            if written[0] == "ticket":
+                guard_self_approval(
+                    root, written[1], written[2], written[3], gate_actor
+                )
     resolved_ticket = (
         _resolve_ticket_path(parts, ticket_map)
         if parts and parts[0] == "tickets"
@@ -3727,9 +4470,38 @@ def cmd_set(args: argparse.Namespace) -> None:
         and len(parts) >= 3
         and parts[2] == "evidence"
     ):
-        # --replace must not clear the list either: the audit trail then says
-        # only "replaced" and the evidence a gate closed on is gone.
-        fail("phase evidence is append-only; use append")
+        # Phase evidence is append-only by default because it is the record a
+        # gate closed on. A prune is still possible with an explicit replace
+        # and reason, so a deleted file cannot trap close forever.
+        if not args.replace:
+            fail(
+                "phase evidence is append-only; use append, or --replace "
+                "with the kept list and --reason to prune it"
+            )
+        if not str(args.reason or "").strip():
+            fail("--replace needs --reason")
+        if not isinstance(value, list):
+            fail("phase evidence must be a JSON list of path strings")
+        roots = _known_project_roots(args, path, data)
+        project_root = roots[0] if roots else _default_project_root(path)
+        cleaned_evidence: list[str] = []
+        for entry in value:
+            if not isinstance(entry, str) or not entry.strip():
+                fail("phase evidence entries must be non-empty path strings")
+            if project_root is not None:
+                candidate = Path(expand_project_root(entry, project_root))
+                if not candidate.is_absolute():
+                    candidate = project_root / candidate
+                if not _inside(candidate, project_root):
+                    fail("phase evidence must stay inside the project root")
+                if not candidate.is_file() or candidate.stat().st_size == 0:
+                    fail(
+                        "phase evidence must name an existing non-empty "
+                        f"file: {entry}"
+                    )
+                entry = str(expand_pointer_token(entry, project_root))
+            cleaned_evidence.append(entry)
+        value[:] = cleaned_evidence
     if written is not None and scope_id is None:
         fail("gate writes need a workstream; omit --root")
     current_status = None
@@ -3747,6 +4519,7 @@ def cmd_set(args: argparse.Namespace) -> None:
         and written[3] not in ("overridden", "skipped", "open", "blocked")
         and args.reason
         and not args.replace
+        and not getattr(args, "as_role", None)
         and not (
             written[3] == "passed"
             and current_status in ("passed", "overridden", "skipped")
@@ -3756,6 +4529,18 @@ def cmd_set(args: argparse.Namespace) -> None:
             "--reason applies to an override, a skip, or a reopen, "
             "not a passed gate"
         )
+    phase_status = None
+    if (
+        scope_id is not None
+        and parts
+        and parts[0] == "phases"
+        and len(parts) >= 2
+        and parts[1] in PHASES
+    ):
+        if len(parts) >= 3 and parts[2] == "status":
+            phase_status = value
+        elif len(parts) == 2 and isinstance(value, dict):
+            phase_status = value.get("status")
     if scope_id is not None:
         _guard_phase_status(root, args.path, value, args.reason, model)
         _guard_active_phase(root, args.path, value)
@@ -3763,7 +4548,28 @@ def cmd_set(args: argparse.Namespace) -> None:
         _guard_blocked_gate(root, args.path, value)
         _guard_reopen(root, args.path, value, args.reason)
         _guard_ticket_order(root, args.path, value)
-        _guard_ticket_node(root, args.path, value, args.reason)
+        _guard_ticket_node(
+            root,
+            args.path,
+            value,
+            args.reason,
+            acting_role(args, root, root.get("track", "feature")),
+        )
+    phase_actor = None
+    if phase_status in ("done", "skipped"):
+        # Advancing a phase is the write that hands the workstream to another
+        # role, so it is checked and logged like a gate decision.
+        phase_actor = acting_role(args, root, root.get("track", "feature"))
+        phase_owner = role_for_phase(parts[1], root.get("track", "feature"))
+        if (
+            phase_owner
+            and phase_owner != phase_actor
+            and not str(args.reason or "").strip()
+        ):
+            fail(
+                f"phase {parts[1]} belongs to {phase_owner}; {phase_actor} "
+                f"needs --reason to mark it {phase_status}"
+            )
     parent, key = get_parent(root, args.path)
     node_write = written is not None and _gate_status_target(args.path) is None
     previous = parent.get(key)
@@ -3786,6 +4592,26 @@ def cmd_set(args: argparse.Namespace) -> None:
                     "phase evidence is append-only; keep the existing entries "
                     "and use append for new ones"
                 )
+            phase_roots = _known_project_roots(args, path, data)
+            phase_root = phase_roots[0] if phase_roots else None
+            cleaned_phase_evidence: list[str] = []
+            for entry in kept:
+                if not isinstance(entry, str) or not entry.strip():
+                    fail("phase evidence entries must be non-empty path strings")
+                if phase_root is not None:
+                    candidate = Path(expand_project_root(entry, phase_root))
+                    if not candidate.is_absolute():
+                        candidate = phase_root / candidate
+                    if not _inside(candidate, phase_root):
+                        fail("phase evidence must stay inside the project root")
+                    if not candidate.is_file() or candidate.stat().st_size == 0:
+                        fail(
+                            "phase evidence must name an existing non-empty "
+                            f"file: {entry}"
+                        )
+                    entry = str(expand_pointer_token(entry, phase_root))
+                cleaned_phase_evidence.append(entry)
+            value["evidence"] = cleaned_phase_evidence
     if isinstance(value, dict):
         if (
             parts
@@ -3797,6 +4623,10 @@ def cmd_set(args: argparse.Namespace) -> None:
             # that validate then rejects.
             if isinstance(previous, dict) and previous.get("gate"):
                 value.setdefault("gate", previous["gate"])
+        if node_write and _written_gate(args.path, value) is not None:
+            # The acting role is recorded by the command, never supplied by a
+            # payload: a hand-written actor would launder a self-approval.
+            value.pop("actor", None)
         if node_write and isinstance(previous, dict):
             # A node replacement keeps the metadata the schema treats as
             # part of the decision. A decided gate cannot silently lose the
@@ -3844,6 +4674,11 @@ def cmd_set(args: argparse.Namespace) -> None:
             "required",
             "conditional",
         )
+        if status == "skipped" and level in ("required", "conditional"):
+            fail(
+                f"{kind} gate {reference}.{gate_name} is {level}; use "
+                "`overridden` to decline it (skipped is for optional gates)"
+            )
         stored = value if node_write else parent
         if needs_reason:
             if node_write and str(stored.get("override_reason") or "").strip():
@@ -3862,7 +4697,7 @@ def cmd_set(args: argparse.Namespace) -> None:
             # A --reason on a node replacement belongs to --replace, not to
             # the gate. Keep a reason already present on the new node.
             stored.setdefault("override_reason", None)
-        elif args.reason and status not in ("open", "blocked"):
+        elif args.reason and status in ("overridden", "skipped"):
             stored["override_reason"] = args.reason
         else:
             # An open or blocked gate has no decision, so it carries no
@@ -3873,11 +4708,16 @@ def cmd_set(args: argparse.Namespace) -> None:
                 # Reopening starts fresh work: the previous decision's
                 # evidence must not keep satisfying the gate.
                 stored.pop("evidence", None)
+                stored.pop("actor", None)
                 stored["decided_at"] = None
             elif status != current_status:
                 stored["decided_at"] = now_iso()
             elif not stored.get("decided_at"):
                 stored["decided_at"] = now_iso()
+            if status in ("passed", "overridden", "skipped"):
+                stored["actor"] = gate_actor
+            elif status == "blocked":
+                stored.pop("actor", None)
     if (
         scope_id is not None
         and parts
@@ -3915,21 +4755,32 @@ def cmd_set(args: argparse.Namespace) -> None:
                     continue
                 if workstream_id == value:
                     workstream["status"] = "active"
+                    workstream["updated"] = now_iso()
                     refresh_workstream(workstream, model)
                 elif workstream.get("status") == "active":
                     workstream["status"] = "paused"
+                    workstream["updated"] = now_iso()
                     refresh_workstream(workstream, model)
     if args.path == "status" and scope_id is not None:
         if value == "active":
+            # A resumed workstream re-resolves its role from its phase; a
+            # persisted override from the paused run would go stale.
+            root.pop("role_override", None)
             for other_id, other in (data.get("workstreams") or {}).items():
                 if other_id == scope_id or not isinstance(other, dict):
                     continue
                 if other.get("status") == "active":
                     other["status"] = "paused"
+                    other["updated"] = now_iso()
                     refresh_workstream(other, model)
+            root["updated"] = now_iso()
             data["active_workstream"] = scope_id
-        elif data.get("active_workstream") == scope_id:
-            data["active_workstream"] = None
+        else:
+            # Pausing clears active_workstream; stamping `updated` keeps
+            # `summary` from reporting a sibling as the most recent record.
+            root["updated"] = now_iso()
+            if data.get("active_workstream") == scope_id:
+                data["active_workstream"] = None
     if args.path == "bmad.model":
         current_model = previous_model or "unknown"
         if (
@@ -3970,21 +4821,30 @@ def cmd_set(args: argparse.Namespace) -> None:
     elif scope_id is not None and args.path != "next":
         refresh_workstream(root, model)
     data["updated"] = now_iso()
-    save_plan(path, data)
     memlog_path = resolve_memlog(data, args, path)
     if written is not None:
         append_memlog(
             memlog_path,
             "gate",
             f"{scope_id or 'root'} {args.path}={value}"
-            + (f" (reason: {args.reason})" if args.reason else ""),
+            + (f" by {gate_actor}" if gate_actor else "")
+            + (
+                f" (as=explicit, reason: {args.reason})"
+                if getattr(args, "as_role", None)
+                else (f" (reason: {args.reason})" if args.reason else "")
+            ),
         )
     elif parts and parts[0] == "phases" and parts[-1] == "status":
         append_memlog(
             memlog_path,
             "event",
             f"{scope_id or 'root'} {args.path}={value}"
-            + (f" (reason: {args.reason})" if args.reason else ""),
+            + (f" by {phase_actor}" if phase_actor else "")
+            + (
+                f" (as=explicit, reason: {args.reason})"
+                if getattr(args, "as_role", None)
+                else (f" (reason: {args.reason})" if args.reason else "")
+            ),
         )
     elif args.path == "bmad.model":
         line = f"BMAD model set to {value}"
@@ -4020,6 +4880,9 @@ def cmd_set(args: argparse.Namespace) -> None:
             "event",
             f"{scope_id or 'root'} {args.path} updated",
         )
+    # The audit intent is written first: a SIGKILL between the two leaves a
+    # line explaining the write rather than a decided gate with no record.
+    save_plan(path, data)
     emit(
         {
             "ok": True,
@@ -4062,10 +4925,10 @@ def cmd_append(args: argparse.Namespace) -> None:
         fail(f"path is not a list: {args.path}")
     value = parse_value(args.value, args.null)
     if args.path.endswith(".evidence") and (
-        value is None or (isinstance(value, str) and not value.strip())
+        not isinstance(value, str) or not value.strip()
     ):
-        fail("evidence entries must be non-empty paths")
-    if args.path.endswith(".evidence") and isinstance(value, str):
+        fail("evidence entries must be non-empty path strings")
+    if args.path.endswith(".evidence"):
         roots = _known_project_roots(args, path, data)
         if roots:
             candidate = Path(expand_project_root(value, roots[0]))
@@ -4075,6 +4938,11 @@ def cmd_append(args: argparse.Namespace) -> None:
                 # A permanently blocking pointer with no removal command is a
                 # trap; refuse it at the only write that creates it.
                 fail("phase evidence must stay inside the project root")
+            if not candidate.is_file() or candidate.stat().st_size == 0:
+                fail(
+                    "phase evidence must name an existing non-empty file: "
+                    f"{value}"
+                )
             value = str(expand_pointer_token(value, roots[0]))
     if args.path == "decisions":
         if not isinstance(value, dict):
@@ -4122,6 +4990,10 @@ def cmd_ticket(args: argparse.Namespace) -> None:
         fail(f"unknown ticket gate {args.gate!r}; choose one of {', '.join(TICKET_GATES)}")
     if args.status not in GATE_STATUSES:
         fail(f"unknown status {args.status!r}; choose one of {', '.join(GATE_STATUSES)}")
+    ticket_track = workstream.get("track", "feature")
+    ticket_actor = acting_role(args, workstream, ticket_track)
+    ticket_owner = role_for_action(f"build.{args.gate}", ticket_track)
+    foreign_decision = ticket_owner not in (None, ticket_actor)
     tickets = workstream.get("tickets")
     if tickets is None:
         tickets = {}
@@ -4130,6 +5002,21 @@ def cmd_ticket(args: argparse.Namespace) -> None:
         fail("workstream.tickets must be a mapping")
     ticket = tickets.get(args.id)
     if ticket is None:
+        # Adding a ticket reopens the build gate. A later phase marked done
+        # over the old build would then validate as done with an undecided
+        # build gate, so refuse until those phases are reopened.
+        later_done = [
+            phase
+            for phase in PHASES[PHASES.index("build") + 1 :]
+            if ((workstream.get("phases") or {}).get(phase) or {}).get("status")
+            in ("done", "skipped")
+        ]
+        if later_done:
+            fail(
+                "cannot add a ticket while a later phase is done: "
+                + ", ".join(later_done)
+                + "; reopen those phases first"
+            )
         ticket = {"title": args.title or "", "gates": {}}
         tickets[args.id] = ticket
     if not isinstance(ticket, dict):
@@ -4160,11 +5047,21 @@ def cmd_ticket(args: argparse.Namespace) -> None:
         for gate_name in TICKET_GATES
     }
     level = level_map.get(args.gate, "optional")
+    if args.status == "skipped" and level in ("required", "conditional"):
+        fail(
+            f"ticket gate {args.gate} is {level}; use `overridden` to decline "
+            "it (skipped is for optional gates)"
+        )
     current = str(node.get("status") or "open")
     if (
         args.status not in ("overridden", "skipped", "open", "blocked")
         and args.reason
-        and not (args.status == "passed" and current in ("passed", "overridden", "skipped"))
+        and not (
+            args.status == "passed"
+            and current in ("passed", "overridden", "skipped")
+        )
+        and not foreign_decision
+        and not getattr(args, "as_role", None)
     ):
         fail(
             "--reason applies to an override, a skip, or a reopen, "
@@ -4217,6 +5114,17 @@ def cmd_ticket(args: argparse.Namespace) -> None:
             "a blocked gate cannot be passed; resolve its evidence or "
             "override it with --reason"
         )
+    gate_actor = ticket_actor
+    if args.status in ("passed", "overridden", "skipped"):
+        guard_gate_actor(
+            args,
+            gate_actor,
+            f"build.{args.gate}",
+            ticket_track,
+        )
+        guard_self_approval(
+            workstream, args.id, args.gate, args.status, gate_actor
+        )
     _guard_reopen(
         workstream,
         f"tickets.{args.id}.gates.{args.gate}.status",
@@ -4229,25 +5137,35 @@ def cmd_ticket(args: argparse.Namespace) -> None:
     )
     if args.status in ("open", "blocked"):
         node["override_reason"] = None
+        # A reopened gate has no decision, so no role approved it.
+        node.pop("actor", None)
         # Reopening starts fresh work; evidence from the earlier decision is
         # stale and must not keep satisfying the gate.
         if args.evidence is None:
             node.pop("evidence", None)
-    elif args.reason:
+    elif args.reason and args.status in ("overridden", "skipped"):
         node["override_reason"] = args.reason
     elif args.status != "overridden":
         node["override_reason"] = None
+    if args.status in ("passed", "overridden", "skipped"):
+        node["actor"] = gate_actor
     refresh_workstream(
         workstream, bmad_map(data).get("model") or "unknown"
     )
     data["updated"] = now_iso()
-    save_plan(path, data)
     append_memlog(
         resolve_memlog(data, args, path),
         "gate",
         f"{workstream_id} ticket {args.id} {args.gate}={args.status}"
-        + (f" (reason: {args.reason})" if args.reason else ""),
+        + f" by {gate_actor}"
+        + (
+            f" (as=explicit, reason: {args.reason})"
+            if getattr(args, "as_role", None)
+            else (f" (reason: {args.reason})" if args.reason else "")
+        ),
     )
+    # Intent first, then the ledger write (see cmd_set).
+    save_plan(path, data)
     emit(
         {
             "ok": True,
@@ -4366,12 +5284,22 @@ def cmd_done(args: argparse.Namespace) -> None:
     # A closed workstream has no active or pending phase. Every phase that
     # reached this point has no blocking gate, so its status cache can be
     # made terminal instead of leaving `build` active on a done workstream.
+    auto_advanced: list[str] = []
     for phase in PHASES:
         if phase == "close":
             continue
         node = (workstream.get("phases") or {}).get(phase)
         if isinstance(node, dict) and node.get("status") in ("pending", "active"):
+            # A waiver with no ticket must not claim the build phase finished.
+            if (
+                phase == "build"
+                and track != "audit"
+                and not tickets
+                and accept_missing_tickets
+            ):
+                continue
             node["status"] = "done"
+            auto_advanced.append(phase)
 
     project_root = (
         Path(expand_project_root(args.project_root, Path.cwd())).resolve()
@@ -4385,146 +5313,165 @@ def cmd_done(args: argparse.Namespace) -> None:
         )
     if not project_root.is_dir():
         fail(f"project root not found: {project_root}")
+    paths = _require_valid_config(project_root)
+    levels = resolve_gate_levels(track, size, model)
+    # Only a pointer that a decided required or conditional gate depends on is
+    # part of the close contract. A stale pointer for an optional gate the
+    # human never decided must not block close; reconcile still reports it.
+    gate_key_groups: list[set[str]] = []
+    for phase in PHASES:
+        phase_gates = (workstream.get("gates") or {}).get(phase) or {}
+        for name in GATE_NAMES[phase]:
+            gate_id = f"{phase}.{name}"
+            gate_node = phase_gates.get(name) or {}
+            if gate_node.get("status") != "passed":
+                # An override is an accepted gap: its reason, not a pointer,
+                # is the record, and the close summary lists it.
+                continue
+            if levels.get(gate_id) not in ("required", "conditional"):
+                continue
+            keys = {key for key, gates in ARTIFACT_GATES.items() if gate_id in gates}
+            if keys:
+                gate_key_groups.append(keys)
     artifacts = workstream.get("artifacts") or {}
+
+    def pointer_resolves(key: str) -> bool:
+        pointer = artifacts.get(key)
+        if not pointer:
+            return False
+        if key == "ux" and ux_pair_ready(workstream, project_root):
+            return True
+        candidate = Path(str(pointer))
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        return _inside(candidate, project_root) and candidate.is_file() and candidate.stat().st_size > 0
+
     missing_evidence: list[str] = []
-    if project_root is not None:
-        for key, pointer in artifacts.items():
-            if not pointer:
-                continue
-            if key == "ux" and ux_pair_ready(workstream, project_root):
-                # The UX pointer may name the folder that holds the pair.
-                continue
-            candidate = Path(str(pointer))
+    for key, pointer in artifacts.items():
+        if not pointer:
+            continue
+        group = next((group for group in gate_key_groups if key in group), None)
+        if group is None:
+            continue
+        # A gate satisfied by an alternative pointer (SPEC.md or a PRD) must
+        # not be blocked by a stale pointer on the other alternative.
+        if any(pointer_resolves(other) for other in group if other != key):
+            continue
+        if key == "ux" and ux_pair_ready(workstream, project_root):
+            # The UX pointer may name the folder that holds the pair.
+            continue
+        candidate = Path(str(pointer))
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        try:
+            candidate.resolve().relative_to(project_root.resolve())
+        except ValueError:
+            missing_evidence.append(
+                f"{key}={pointer} (outside project root)"
+            )
+            continue
+        if not candidate.is_file() or candidate.stat().st_size == 0:
+            missing_evidence.append(f"{key}={pointer}")
+    for phase in PHASES:
+        node = (workstream.get("phases") or {}).get(phase) or {}
+        for value in node.get("evidence") or []:
+            candidate = Path(str(value))
             if not candidate.is_absolute():
                 candidate = project_root / candidate
             try:
                 candidate.resolve().relative_to(project_root.resolve())
             except ValueError:
                 missing_evidence.append(
-                    f"{key}={pointer} (outside project root)"
+                    f"{phase}.evidence={value} (outside project root)"
                 )
                 continue
             if not candidate.is_file() or candidate.stat().st_size == 0:
-                missing_evidence.append(f"{key}={pointer}")
-        for phase in PHASES:
-            node = (workstream.get("phases") or {}).get(phase) or {}
-            for value in node.get("evidence") or []:
-                candidate = Path(str(value))
+                missing_evidence.append(f"{phase}.evidence={value}")
+    # A passed required/conditional gate must have the artifact it
+    # claims. Without this, every gate can be marked passed and the
+    # workstream closes with no evidence at all.
+    planning = Path(paths["planning_artifacts"])
+    for phase in PHASES:
+        phase_gates = (workstream.get("gates") or {}).get(phase) or {}
+        for name in GATE_NAMES[phase]:
+            gate_id = f"{phase}.{name}"
+            gate_node = phase_gates.get(name) or {}
+            if gate_node.get("status") != "passed":
+                # An override is an accepted gap: its reason, not a pointer,
+                # is the record, and the close summary lists it.
+                continue
+            if levels.get(gate_id) not in ("required", "conditional"):
+                continue
+            keys = [
+                key
+                for key, gates in ARTIFACT_GATES.items()
+                if gate_id in gates
+            ]
+            # The UX gate needs both halves; phase evidence must not
+            # short-circuit that rule.
+            if gate_id == "plan.ux":
+                if not ux_pair_ready(workstream, project_root, planning):
+                    missing_evidence.append(
+                        "plan.ux (needs DESIGN.md and EXPERIENCE.md)"
+                    )
+                continue
+            if not keys:
+                # No artifact key exists for this gate. It still needs a
+                # pointer: phase evidence is the only place the schema can
+                # record one, and every entry there was just resolved.
+                phase_evidence = (
+                    (workstream.get("phases") or {}).get(phase) or {}
+                ).get("evidence") or []
+                if not phase_evidence:
+                    missing_evidence.append(
+                        f"{gate_id} (no artifact key and no phase evidence)"
+                    )
+                continue
+            if not any(artifacts.get(key) for key in keys):
+                missing_evidence.append(f"{gate_id} (no artifact)")
+    # Per-ticket gates carry their own evidence pointer now. Resolve every
+    # pointer that is present, and require one for an overridden ticket
+    # gate: an override alone must not close a ticket.
+    ticket_level_map = ticket_levels(track, size)
+    build_evidence = (
+        (workstream.get("phases") or {}).get("build") or {}
+    ).get("evidence") or []
+    for ticket_id, ticket in tickets.items():
+        if not isinstance(ticket, dict):
+            continue
+        ticket_gates = ticket.get("gates")
+        if not isinstance(ticket_gates, dict):
+            continue
+        for name in TICKET_GATES:
+            node = ticket_gates.get(name)
+            if not isinstance(node, dict):
+                continue
+            pointer = node.get("evidence")
+            if pointer:
+                candidate = Path(str(pointer))
                 if not candidate.is_absolute():
                     candidate = project_root / candidate
                 try:
                     candidate.resolve().relative_to(project_root.resolve())
                 except ValueError:
                     missing_evidence.append(
-                        f"{phase}.evidence={value} (outside project root)"
+                        f"build.{ticket_id}.{name}={pointer} "
+                        "(outside project root)"
                     )
                     continue
                 if not candidate.is_file() or candidate.stat().st_size == 0:
-                    missing_evidence.append(f"{phase}.evidence={value}")
-        # A decided required/conditional gate must have the artifact it
-        # claims. Without this, every gate can be marked passed and the
-        # workstream closes with no evidence at all.
-        levels = resolve_gate_levels(track, size, model)
-        planning = Path(resolve_paths(project_root)["planning_artifacts"])
-        for phase in PHASES:
-            phase_gates = (workstream.get("gates") or {}).get(phase) or {}
-            for name in GATE_NAMES[phase]:
-                gate_id = f"{phase}.{name}"
-                gate_node = phase_gates.get(name) or {}
-                if gate_node.get("status") not in ("passed", "overridden"):
-                    continue
-                if levels.get(gate_id) not in ("required", "conditional"):
-                    continue
-                keys = [
-                    key
-                    for key, gates in ARTIFACT_GATES.items()
-                    if gate_id in gates
-                ]
-                # The UX gate needs both halves; phase evidence must not
-                # short-circuit that rule.
-                if gate_id == "plan.ux":
-                    if not ux_pair_ready(workstream, project_root, planning):
-                        missing_evidence.append(
-                            "plan.ux (needs DESIGN.md and EXPERIENCE.md)"
-                        )
-                    continue
-                if not keys:
-                    # No artifact key exists for this gate. It still needs a
-                    # pointer: phase evidence is the only place the schema can
-                    # record one, and every entry there was just resolved.
-                    phase_evidence = (
-                        (workstream.get("phases") or {}).get(phase) or {}
-                    ).get("evidence") or []
-                    if not phase_evidence:
-                        missing_evidence.append(
-                            f"{gate_id} (no artifact key and no phase evidence)"
-                        )
-                    continue
-                if not any(artifacts.get(key) for key in keys):
-                    missing_evidence.append(f"{gate_id} (no artifact)")
-        # Per-ticket gates carry their own evidence pointer now. Resolve every
-        # pointer that is present, and require one for an overridden ticket
-        # gate: an override alone must not close a ticket.
-        ticket_level_map = ticket_levels(track, size)
-        build_evidence = (
-            (workstream.get("phases") or {}).get("build") or {}
-        ).get("evidence") or []
-        for ticket_id, ticket in tickets.items():
-            if not isinstance(ticket, dict):
-                continue
-            ticket_gates = ticket.get("gates")
-            if not isinstance(ticket_gates, dict):
-                continue
-            for name in TICKET_GATES:
-                node = ticket_gates.get(name)
-                if not isinstance(node, dict):
-                    continue
-                pointer = node.get("evidence")
-                if pointer:
-                    candidate = Path(str(pointer))
-                    if not candidate.is_absolute():
-                        candidate = project_root / candidate
-                    try:
-                        candidate.resolve().relative_to(project_root.resolve())
-                    except ValueError:
-                        missing_evidence.append(
-                            f"build.{ticket_id}.{name}={pointer} "
-                            "(outside project root)"
-                        )
-                        continue
-                    if not candidate.is_file() or candidate.stat().st_size == 0:
-                        missing_evidence.append(
-                            f"build.{ticket_id}.{name}={pointer}"
-                        )
-                if (
-                    node.get("status") == "overridden"
-                    and ticket_level_map.get(name) in ("required", "conditional")
-                    and not pointer
-                    and not build_evidence
-                ):
                     missing_evidence.append(
-                        f"build.{ticket_id}.{name} (overridden without evidence)"
+                        f"build.{ticket_id}.{name}={pointer}"
                     )
-    elif any(artifacts.values()) or any(
-        ((node or {}).get("evidence") or [])
-        for node in (workstream.get("phases") or {}).values()
-        if isinstance(node, dict)
-    ) or any(
-        ((gate or {}).get("status") in ("passed", "overridden"))
-        for phase in PHASES
-        for gate in (((workstream.get("gates") or {}).get(phase)) or {}).values()
-        if isinstance(gate, dict)
-    ) or any(
-        ((gate or {}).get("status") in ("passed", "overridden"))
-        for ticket in tickets.values()
-        if isinstance(ticket, dict)
-        for gate in ((ticket.get("gates") or {}).values())
-        if isinstance(gate, dict)
-    ):
-        fail(
-            "pass --project-root to validate artifact evidence for a "
-            "custom ledger path"
-        )
+            if (
+                node.get("status") == "overridden"
+                and ticket_level_map.get(name) in ("required", "conditional")
+                and not pointer
+                and not build_evidence
+            ):
+                missing_evidence.append(
+                    f"build.{ticket_id}.{name} (overridden without evidence)"
+                )
     if missing_evidence and not getattr(args, "accept_missing_evidence", False):
         fail(
             "cannot mark the workstream done; missing evidence: "
@@ -4578,8 +5525,17 @@ def cmd_done(args: argparse.Namespace) -> None:
     if stale_tickets and not str(args.reason or "").strip():
         fail("--accept-missing-tickets needs --reason")
     stamp = now_iso()
+    closer, _ = resolve_current_role(
+        None,
+        workstream.get("current_phase"),
+        track,
+        workstream.get("role_override"),
+    )
     workstream["status"] = "done"
     workstream["current_phase"] = "close"
+    # role_override is per-run: a closed workstream resolves its role from the
+    # close phase if it is ever reopened.
+    workstream.pop("role_override", None)
     workstream["next"] = None
     workstream["updated"] = stamp
     close = (workstream.get("phases") or {}).get("close")
@@ -4588,9 +5544,11 @@ def cmd_done(args: argparse.Namespace) -> None:
     if data.get("active_workstream") == workstream_id:
         data["active_workstream"] = None
     data["updated"] = stamp
-    save_plan(path, data)
     memlog_path = resolve_memlog(data, args, path)
-    close_note = f"workstream {workstream_id} marked done"
+    close_note = (
+        f"workstream {workstream_id} marked done (by {closer}; "
+        "close.mark_done is role-free, so no single role closes the workstream)"
+    )
     close_notes: list[str] = []
     overridden = [
         f"{phase}.{name}"
@@ -4624,6 +5582,12 @@ def cmd_done(args: argparse.Namespace) -> None:
         # gate-matrix requires an override to be visible in the close summary,
         # not only in the gate line where it happened.
         close_notes.append("overrides: " + ", ".join(sorted(overridden)))
+    if auto_advanced:
+        # `done` advances every non-terminal phase in one write; the close note
+        # names each auto-advanced phase so no phase move is silent.
+        close_notes.append(
+            "auto-advanced phases: " + ", ".join(auto_advanced)
+        )
     if missing_evidence and getattr(args, "accept_missing_evidence", False):
         close_notes.append(
             "accepted missing evidence: " + ", ".join(missing_evidence)
@@ -4643,8 +5607,10 @@ def cmd_done(args: argparse.Namespace) -> None:
     if str(args.reason or "").strip():
         close_notes.append(f"reason: {args.reason}")
     if close_notes:
-        close_note += " (" + "; ".join(close_notes) + ")"
+        close_note += "; " + "; ".join(close_notes)
     memlog = append_memlog(memlog_path, "event", close_note)
+    # Intent first, then the ledger write (see cmd_set).
+    save_plan(path, data)
     emit(
         {
             "ok": True,
@@ -4676,11 +5642,6 @@ def cmd_migrate(args: argparse.Namespace) -> None:
     skipped_workstreams: list[str] = []
     for workstream_id, workstream in workstreams.items():
         if not isinstance(workstream, dict):
-            continue
-        if str(workstream.get("status") or "active") in ("done", "paused"):
-            # Repairing a closed or paused workstream is a reopen decision,
-            # not a migration side effect.
-            skipped_workstreams.append(workstream_id)
             continue
         track = workstream.get("track", "feature")
         size = workstream.get("size", "epic")
@@ -4732,6 +5693,26 @@ def cmd_migrate(args: argparse.Namespace) -> None:
                 elif node.get("level") != resolved:
                     node["level"] = resolved
                     changed.append(f"{workstream_id}.gates.{phase}.{name}.level")
+                if (
+                    isinstance(node, dict)
+                    and node.get("status") in ("passed", "overridden", "skipped")
+                    and not node.get("actor")
+                ):
+                    # An older ledger did not record the deciding role. Backfill
+                    # the phase owner so validate and the self-approval audit
+                    # keep working; the audit trail retains the real history.
+                    node["actor"] = role_for_phase(phase, track) or "qa"
+                    changed.append(
+                        f"{workstream_id}.gates.{phase}.{name}.actor"
+                    )
+            # A gate the schema no longer knows can never be decided or
+            # cleared; migrate is the repair path the warning names.
+            for name in list(phase_gates):
+                if name not in GATE_NAMES[phase]:
+                    del phase_gates[name]
+                    changed.append(
+                        f"{workstream_id}.gates.{phase}.{name} removed"
+                    )
         for phase in PHASES:
             node = phases.get(phase)
             if not isinstance(node, dict):
@@ -4749,6 +5730,27 @@ def cmd_migrate(args: argparse.Namespace) -> None:
         if not isinstance(workstream.get("tickets"), dict):
             workstream["tickets"] = {}
             changed.append(f"{workstream_id}.tickets")
+        for ticket_id, ticket in (workstream.get("tickets") or {}).items():
+            if not isinstance(ticket, dict):
+                continue
+            for gate_name, node in (ticket.get("gates") or {}).items():
+                if (
+                    isinstance(node, dict)
+                    and node.get("status") in ("passed", "overridden", "skipped")
+                    and not node.get("actor")
+                ):
+                    node["actor"] = (
+                        "qa"
+                        if track == "audit"
+                        else role_for_action(
+                            f"build.{gate_name}", track
+                        )
+                        or "qa"
+                    )
+                    changed.append(
+                        f"{workstream_id}.tickets.{ticket_id}.gates."
+                        f"{gate_name}.actor"
+                    )
         if track == "audit" and not workstream.get("tickets"):
             synthetic_stamp = now_iso()
             workstream["tickets"]["audit"] = {
@@ -4758,11 +5760,13 @@ def cmd_migrate(args: argparse.Namespace) -> None:
                         "status": "skipped",
                         "decided_at": synthetic_stamp,
                         "override_reason": None,
+                        "actor": "qa",
                     },
                     "tests": {
                         "status": "skipped",
                         "decided_at": synthetic_stamp,
                         "override_reason": None,
+                        "actor": "qa",
                     },
                     "review": {
                         "status": "open",
@@ -4773,6 +5777,7 @@ def cmd_migrate(args: argparse.Namespace) -> None:
                         "status": "skipped",
                         "decided_at": synthetic_stamp,
                         "override_reason": None,
+                        "actor": "qa",
                     },
                 },
             }
@@ -4933,6 +5938,11 @@ def cmd_reconcile(args: argparse.Namespace) -> None:
     if not project_root.is_dir():
         fail(f"project root not found: {project_root}")
     paths = resolve_paths(project_root)
+    if _CONFIG_ERRORS:
+        fail(
+            "malformed BMAD config; fix it before reconcile: "
+            + "; ".join(_CONFIG_ERRORS)
+        )
     write = bool(getattr(args, "write", False))
     memlog = resolve_memlog(data, args, path)
     workstreams = data.get("workstreams") or {}
@@ -5042,19 +6052,32 @@ def cmd_reconcile(args: argparse.Namespace) -> None:
             workstream.get("size", "epic"),
             bmad_map(data).get("model") or "unknown",
         )
+        overridden_gates: set[str] = set()
+        for phase in PHASES:
+            phase_gates = (workstream.get("gates") or {}).get(phase) or {}
+            for name in GATE_NAMES[phase]:
+                node = phase_gates.get(name)
+                if (
+                    isinstance(node, dict)
+                    and node.get("status") == "overridden"
+                    and str(node.get("override_reason") or "").strip()
+                ):
+                    overridden_gates.add(f"{phase}.{name}")
         gates_to_block = [
             gate
             for item in missing
             for gate in ARTIFACT_GATES.get(item["artifact"], [])
             if levels.get(gate) in ("required", "conditional")
+            and gate not in overridden_gates
         ]
-        # A passed/overridden gate whose artifact pointer is unset has no
-        # evidence behind it; that gate is blocked, not silently passed.
+        # A passed gate whose artifact pointer is unset has no evidence behind
+        # it; that gate is blocked, not silently passed. An overridden gate is
+        # an accepted gap recorded by its reason and the close summary.
         for phase in PHASES:
             for name in GATE_NAMES[phase]:
                 gate_id = f"{phase}.{name}"
                 node = ((workstream.get("gates") or {}).get(phase) or {}).get(name) or {}
-                if node.get("status") not in ("passed", "overridden"):
+                if node.get("status") != "passed":
                     continue
                 if levels.get(gate_id) not in ("required", "conditional"):
                     continue
@@ -5093,6 +6116,27 @@ def cmd_reconcile(args: argparse.Namespace) -> None:
         requires_reason: list[str] = []
         if writable:
             model = bmad_map(data).get("model") or "unknown"
+            # A gate that reconcile blocked because its artifact was missing
+            # returns to `open` once the artifact resolves, so the agent never
+            # needs an override to clear a recovered block.
+            for phase in PHASES:
+                if phase in phases_to_block:
+                    continue
+                phase_gates = (workstream.get("gates") or {}).get(phase) or {}
+                for name in GATE_NAMES[phase]:
+                    gate_id = f"{phase}.{name}"
+                    node = phase_gates.get(name)
+                    if not isinstance(node, dict) or node.get("status") != "blocked":
+                        continue
+                    if gate_id in gates_to_block:
+                        continue
+                    node["status"] = "open"
+                    node["decided_at"] = None
+                    node["override_reason"] = None
+                    node.pop("actor", None)
+                    applied_here.append(
+                        f"{workstream_id}.gates.{gate_id}=open"
+                    )
             for gate_id in gates_to_block:
                 phase, _, name = gate_id.partition(".")
                 node = (
@@ -5189,6 +6233,11 @@ def cmd_verify_return(args: argparse.Namespace) -> None:
     )
     if not project_root.is_dir():
         fail(f"project root not found: {project_root}")
+    target_id = getattr(args, "workstream", None) or data.get("active_workstream")
+    target = (data.get("workstreams") or {}).get(target_id) if target_id else None
+    if getattr(args, "workstream", None) and not isinstance(target, dict):
+        fail(f"workstream not found: {args.workstream}")
+    target_track = target.get("track") if isinstance(target, dict) else None
     if args.return_file:
         raw = Path(args.return_file).read_text(encoding="utf-8")
     elif args.return_json:
@@ -5205,6 +6254,10 @@ def cmd_verify_return(args: argparse.Namespace) -> None:
     status = returned.get("status")
     if status not in ("done", "blocked", "needs_input"):
         fail(f"status must be one of done, blocked, needs_input; got {status!r}")
+    returned_role = returned.get("role")
+    returned_action = returned.get("action")
+    expected_role = str(getattr(args, "expect_role", "") or "").strip().lower()
+    expected_action = str(getattr(args, "expect_action", "") or "").strip()
     raw_artifacts = returned.get("artifacts")
     if raw_artifacts is None:
         raw_artifacts = []
@@ -5226,10 +6279,16 @@ def cmd_verify_return(args: argparse.Namespace) -> None:
     accept_questions = bool(getattr(args, "accept_questions", False))
     memlog_path = resolve_memlog(data, args, path)
 
+    excluded_files = {path.resolve(), memlog_path.resolve()}
+    if args.return_file:
+        excluded_files.add(Path(args.return_file).resolve())
+    scratch_root = (path.parent / ".tmp").resolve()
+
     missing: list[str] = []
     outside: list[str] = []
     malformed: list[str] = []
     ledger_artifacts: list[str] = []
+    scratch_artifacts: list[str] = []
     artifacts: list[dict] = []
     for item in raw_artifacts:
         value = item.get("path") if isinstance(item, dict) else item
@@ -5249,11 +6308,14 @@ def cmd_verify_return(args: argparse.Namespace) -> None:
         except ValueError:
             outside.append(str(value))
             continue
-        if resolved in (path.resolve(), memlog_path.resolve()):
+        if resolved in excluded_files:
             ledger_artifacts.append(str(value))
+        elif resolved == scratch_root or scratch_root in resolved.parents:
+            scratch_artifacts.append(str(value))
 
     evidence_missing: list[str] = []
     evidence_outside: list[str] = []
+    evidence_scratch: list[str] = []
     for item in evidence:
         value = item.get("path") if isinstance(item, dict) else item
         if not value:
@@ -5265,10 +6327,17 @@ def cmd_verify_return(args: argparse.Namespace) -> None:
         if not candidate.is_file() or candidate.stat().st_size == 0:
             evidence_missing.append(str(value))
             continue
+        resolved_evidence = candidate.resolve()
         try:
-            candidate.resolve().relative_to(project_root.resolve())
+            resolved_evidence.relative_to(project_root.resolve())
         except ValueError:
             evidence_outside.append(str(value))
+            continue
+        if resolved_evidence in excluded_files or (
+            resolved_evidence == scratch_root
+            or scratch_root in resolved_evidence.parents
+        ):
+            evidence_scratch.append(str(value))
 
     changed: list[str] = []
     git_dirty = None
@@ -5298,6 +6367,12 @@ def cmd_verify_return(args: argparse.Namespace) -> None:
             body = body.split(" -> ", 1)[1]
         touched_paths.add(body.strip('"'))
     ledger_touched = ledger_rel in touched_paths or memlog_rel in touched_paths
+    allow_unchanged = bool(getattr(args, "allow_unchanged_artifact", False))
+    if allow_unchanged and not str(getattr(args, "reason", "") or "").strip():
+        fail("--allow-unchanged-artifact needs --reason")
+    allow_unattributed = bool(getattr(args, "allow_unattributed", False))
+    if allow_unattributed and not str(getattr(args, "reason", "") or "").strip():
+        fail("--allow-unattributed needs --reason")
     reasons: list[str] = []
     def sha256_of(target: Path) -> str | None:
         try:
@@ -5334,6 +6409,75 @@ def cmd_verify_return(args: argparse.Namespace) -> None:
         )
     if status != "done":
         reasons.append(f"status is {status}")
+    if status == "done" and not allow_unattributed and (
+        not returned_role or not returned_action
+    ):
+        reasons.append(
+            "a done return must name its role and action; pass "
+            "--allow-unattributed --reason to waive"
+        )
+    if (
+        status == "done"
+        and artifacts
+        and git_dirty is not None
+        and not allow_unchanged
+        and not allow_empty
+    ):
+        artifact_rel: list[str] = []
+        for item in artifacts:
+            candidate = Path(item["path"])
+            if not candidate.is_absolute():
+                candidate = project_root / candidate
+            try:
+                artifact_rel.append(
+                    str(candidate.resolve().relative_to(project_root.resolve()))
+                )
+            except ValueError:
+                continue
+        if not any(path in touched_paths for path in artifact_rel):
+            reasons.append(
+                "no returned artifact appears in git status; a pre-existing "
+                "file does not prove the handoff produced anything (pass "
+                "--allow-unchanged-artifact --reason to accept it)"
+            )
+    if expected_role:
+        if not returned_role:
+            reasons.append(
+                f"return does not name a role; expected {expected_role}"
+            )
+        elif str(returned_role).strip().lower() != expected_role:
+            reasons.append(
+                f"return role {returned_role!r} does not match "
+                f"expected {expected_role!r}"
+            )
+    if expected_action:
+        if not returned_action:
+            reasons.append(
+                f"return does not name an action; expected {expected_action}"
+            )
+        elif str(returned_action).strip() != expected_action:
+            reasons.append(
+                f"return action {returned_action!r} does not match "
+                f"expected {expected_action!r}"
+            )
+    if returned_role and returned_action:
+        # A labelled return must be internally consistent: the role that
+        # claims the action must own it. Otherwise a QA label can certify a
+        # DEV action, which defeats separation of duties.
+        action_id = str(returned_action).strip()
+        actor = str(returned_role).strip().lower()
+        if not role_is_free(action_id):
+            owner = role_for_action(action_id, target_track)
+            if owner is None:
+                reasons.append(
+                    f"return action {action_id!r} has no owning role in "
+                    "role-config.toml"
+                )
+            elif owner != actor:
+                reasons.append(
+                    f"return action {action_id!r} belongs to {owner}; "
+                    f"{actor} cannot return it"
+                )
     if not artifacts and not allow_empty:
         reasons.append("no artifacts returned")
     if not evidence:
@@ -5353,7 +6497,18 @@ def cmd_verify_return(args: argparse.Namespace) -> None:
             "evidence outside project root: " + ", ".join(evidence_outside)
         )
     if ledger_artifacts:
-        reasons.append("ledger/memlog used as artifact: " + ", ".join(ledger_artifacts))
+        reasons.append(
+            "ledger, audit trail, or return file used as artifact: "
+            + ", ".join(ledger_artifacts)
+        )
+    if scratch_artifacts:
+        reasons.append(
+            "scratch file used as an artifact: " + ", ".join(scratch_artifacts)
+        )
+    if evidence_scratch:
+        reasons.append(
+            "scratch file used as evidence: " + ", ".join(evidence_scratch)
+        )
     if open_questions and not accept_questions:
         reasons.append("open questions remain: " + "; ".join(map(str, open_questions)))
     # Git status cannot distinguish a prior uncommitted ledger edit from a
@@ -5371,6 +6526,18 @@ def cmd_verify_return(args: argparse.Namespace) -> None:
             memlog_path,
             "decision",
             f"accepted an empty artifact list (reason: {args.reason})",
+        )
+    if ok and allow_unattributed and (not returned_role or not returned_action):
+        append_memlog(
+            memlog_path,
+            "decision",
+            f"accepted an unattributed return (reason: {args.reason})",
+        )
+    if ok and allow_unchanged:
+        append_memlog(
+            memlog_path,
+            "decision",
+            f"accepted an unchanged artifact (reason: {args.reason})",
         )
     if ok:
         # Report the digests the next handoff must pass. The acceptance
@@ -5390,9 +6557,18 @@ def cmd_verify_return(args: argparse.Namespace) -> None:
             "missing_evidence": evidence_missing,
             "outside_evidence": evidence_outside,
             "ledger_artifacts": ledger_artifacts,
+            "scratch_artifacts": scratch_artifacts,
+            "scratch_evidence": evidence_scratch,
             "open_questions": open_questions,
             "accept_questions": accept_questions,
             "allow_empty_artifacts": allow_empty,
+            "allow_unattributed": allow_unattributed,
+            "allow_unchanged_artifact": allow_unchanged,
+            "workstream": target_id,
+            "role": returned_role,
+            "action": returned_action,
+            "expected_role": expected_role or None,
+            "expected_action": expected_action or None,
             "digest_check": digest_check,
             "decisions": returned.get("decisions") or [],
             "next_recommendation": returned.get("next_recommendation"),
@@ -5420,6 +6596,10 @@ def cmd_resize(args: argparse.Namespace) -> None:
         fail("workstream is done; start a new workstream instead of resizing it")
     if workstream.get("status") == "paused":
         fail("workstream is paused; resume it before resizing")
+    if args.track is None and args.size is None:
+        fail("resize needs --track or --size")
+    old_track = workstream.get("track", "feature")
+    old_size = workstream.get("size", "epic")
     track = args.track or workstream.get("track", "feature")
     size = args.size or workstream.get("size", "epic")
     if track not in TRACKS:
@@ -5461,6 +6641,10 @@ def cmd_resize(args: argparse.Namespace) -> None:
             )
     workstream["track"] = track
     workstream["size"] = size
+    # A resize can change the phase path, so a persisted role override no
+    # longer describes the workstream. A no-op call must not clear it.
+    if (track, size) != (old_track, old_size):
+        workstream.pop("role_override", None)
     changed = apply_levels(workstream, model)
     reopened = [
         entry.split(".")[1]
@@ -5503,11 +6687,13 @@ def cmd_resize(args: argparse.Namespace) -> None:
                     "status": "skipped",
                     "decided_at": synthetic_stamp,
                     "override_reason": None,
+                    "actor": "qa",
                 },
                 "tests": {
                     "status": "skipped",
                     "decided_at": synthetic_stamp,
                     "override_reason": None,
+                    "actor": "qa",
                 },
                 "review": {
                     "status": "open",
@@ -5518,6 +6704,7 @@ def cmd_resize(args: argparse.Namespace) -> None:
                     "status": "skipped",
                     "decided_at": synthetic_stamp,
                     "override_reason": None,
+                    "actor": "qa",
                 },
             },
         }
@@ -5592,7 +6779,24 @@ def build_parser() -> argparse.ArgumentParser:
     summary.add_argument("--workstream")
     summary.add_argument("--project-root")
     summary.add_argument("--memlog")
+    # Validated lazily (with JSON) so a broken role config cannot break --help
+    # or any other subcommand.
+    summary.add_argument(
+        "--role",
+        type=str.lower,
+        help="Override auto-detected role for this read.",
+    )
     summary.set_defaults(func=cmd_summary)
+
+    role = subparsers.add_parser("role")
+    role.add_argument("--plan", required=True)
+    role.add_argument("--project-root", default=None)
+    role.add_argument("--workstream")
+    role.add_argument("--role", type=str.lower)
+    role.add_argument("--clear", action="store_true")
+    role.add_argument("--reason")
+    role.add_argument("--memlog")
+    role.set_defaults(func=cmd_role)
 
     set_cmd = subparsers.add_parser("set")
     set_cmd.add_argument("--plan", required=True)
@@ -5606,6 +6810,12 @@ def build_parser() -> argparse.ArgumentParser:
     set_cmd.add_argument("--replace", action="store_true")
     set_cmd.add_argument("--root", action="store_true")
     set_cmd.add_argument("--memlog")
+    set_cmd.add_argument(
+        "--as",
+        dest="as_role",
+        type=str.lower,
+        help="Acting role for a gate write; defaults to current_role.",
+    )
     set_cmd.set_defaults(func=cmd_set)
 
     append = subparsers.add_parser("append")
@@ -5630,6 +6840,12 @@ def build_parser() -> argparse.ArgumentParser:
     ticket.add_argument("--evidence")
     ticket.add_argument("--title")
     ticket.add_argument("--memlog")
+    ticket.add_argument(
+        "--as",
+        dest="as_role",
+        type=str.lower,
+        help="Acting role for a gate write; defaults to current_role.",
+    )
     ticket.set_defaults(func=cmd_ticket)
 
     done = subparsers.add_parser("done")
@@ -5676,6 +6892,11 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--memlog")
     verify.add_argument("--accept-questions", action="store_true")
     verify.add_argument("--allow-empty-artifacts", action="store_true")
+    verify.add_argument("--allow-unattributed", action="store_true")
+    verify.add_argument("--allow-unchanged-artifact", action="store_true")
+    verify.add_argument("--workstream")
+    verify.add_argument("--expect-role")
+    verify.add_argument("--expect-action")
     verify.add_argument("--reason")
     verify.set_defaults(func=cmd_verify_return)
 

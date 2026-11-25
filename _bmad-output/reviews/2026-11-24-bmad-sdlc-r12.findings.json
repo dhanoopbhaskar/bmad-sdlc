@@ -1,0 +1,434 @@
+[
+  {
+    "id": "R12-01",
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/SKILL.md:102,110,115-116 vs scripts/sdlc_plan.py cmd_summary",
+    "trigger_condition": "The model filters the menu by each action's `role` field from `summary`, but `summary` attaches `role`/`role_free`/`role_allowed` only to `next_action` and `optional_actions`. The 11 gateless actions (frame.brainstorm, frame.forge, frame.research, frame.brief, frame.prfaq, build.atdd, build.auto, build.loop, verify.e2e, verify.automate, close.correct_course) never reach the gate path, so no `role` exists for them anywhere in the payload.",
+    "guard_snippet": "Emit `summary.actions[] = [{action, role, role_free, role_allowed, gate}]` for the current phase, built from the phase's gate entries union SKILL_ACTION_IDS, and have SKILL.md and menu.md filter on that list.",
+    "potential_consequence": "A third of the action set cannot be filtered as instructed: the model either drops those actions from the menu or falls back to the prose `Role` column, so `build.atdd`, `verify.e2e`, and `close.correct_course` are unreachable through the documented mechanism.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-02",
+    "lens": "adversarial",
+    "location": "references/headless.md:29 vs SKILL.md:110,115 and references/handoff-protocol.md:188",
+    "trigger_condition": "The headless block's field set is defined twice with opposite rules: headless.md says to omit `required_open`, `conditional_open`, `optional_open` and ticket detail, while SKILL.md says headless emits the unfiltered `summary` lists and the loop keeps every list verbatim.",
+    "guard_snippet": "State one field list in one place and have the other two point at it: emit next_action, optional_actions, open_gates, blocked_gates, locked_phases, phases[]; omit the three per-level lists and ticket detail. Update the cases.json assertions to name exactly those keys.",
+    "potential_consequence": "Observed in 4 of 14 graded runs: the block carried all three per-level lists and ticket detail after the model read headless.md. Two runs of the same case produce different key sets depending on which file was read last, and a consumer keying on `required_open` gets `undefined` in one variant.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-03",
+    "lens": "adversarial",
+    "location": "references/handoff-protocol.md:181 (example), :205 (prose), references/headless.md:16, evals/cases.json role-explicit-qa",
+    "trigger_condition": "`blocked_by` is declared to be \"an ordered array of gate ids\" but the worked example uses `[\"build.review\"]` (an action id; the per-ticket gate id is `build.<ticket>.review`), headless.md says it names \"the action\", and the eval asserts it names `frame.spec` while the gate is `plan.requirements`.",
+    "guard_snippet": "Pick one: keep gate ids and add `blocked_by_actions`, or state action ids. Then align the example, headless.md:16, menu.md, and cases.json's `role-explicit-qa` assertion.",
+    "potential_consequence": "The one eval that pins the field codifies the shape the shape-owning document forbids, so the contract cannot be green in both; a consumer keying on `blocked_by` matches neither shape consistently.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-04",
+    "lens": "adversarial",
+    "location": "references/gate-matrix.md:15",
+    "trigger_condition": "\"the gate id doubles as the action id (`build.review` -> QA, `verify.trace` -> QA, `plan.requirements` -> PM)\" is false for the third example: `plan.requirements` resolves to action `frame.spec` (or `plan.prd` at project size), and per-ticket gates are `build.<ticket>.review`, not `build.review`.",
+    "guard_snippet": "Replace with: the gate id is not always an action id; read `next_action.action` (or `action_for_gate`) for the action and `next_action.role` for the owner. `plan.requirements` -> `frame.spec`/`plan.prd`.",
+    "potential_consequence": "The ownership conclusion (PM) happens to stay right because ownership resolves by prefix, but a model following the sentence tries to run `plan.requirements` as an action and cannot match it in phase-map.md or pass it as `--expect-action`.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-05",
+    "lens": "adversarial",
+    "location": "references/handoff-protocol.md:170-179, references/role-config.toml:29-31, references/dev/phase-map.md:23-25",
+    "trigger_condition": "The most frequent transition, DEV -> QA between `build.ticket` and `build.review` inside an active Build phase, has no row. The only DEV -> QA row fires when every ticket's `build.done` (a QA gate) is decided and `phases.build` is `done`, which is after QA has already worked.",
+    "guard_snippet": "Add: DEV -> QA | build (per ticket) | build.ticket decided and that ticket's build.review is open or blocked; phases.build stays active. Split the existing row into a per-ticket and a per-phase condition.",
+    "potential_consequence": "With `phase_roles.build = dev`, a DEV session sees `next_action.role_allowed: false` for `build.review` with no documented transition explaining it, so the model invents a `role` override or marks the phase done early, defeating the review gate the role split exists to protect.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-06",
+    "lens": "adversarial",
+    "location": "references/menu.md:61-63, references/phase-map.md:106-108, evals/cases.json role-qa-menu",
+    "trigger_condition": "A phase whose `phases[].role` differs from `current_role` is marked with the cross-role arrow, and the menu says selecting it \"offers a handoff ... and never runs a foreign action\". Build is DEV-owned but holds QA's `build.review` and `build.done`, so QA's gate lives behind a phase the menu presents as someone else's.",
+    "guard_snippet": "Distinguish a foreign-only phase from a mixed phase: mark Build as mixed for QA and state that entering a mixed phase lists the actions `current_role` owns.",
+    "potential_consequence": "A QA session can refuse to open Build because the menu says it belongs to DEV, so QA never runs the review and done gates; the role split stalls at its central handoff.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-07",
+    "lens": "adversarial",
+    "location": "SKILL.md:154 vs SKILL.md:53-56,62-63,104-108",
+    "trigger_condition": "\"Never write or probe outside `{project-root}`\" is contradicted by activation step 1, which runs `{project-root}/_bmad/scripts/resolve_customization.py --skill {skill-root}` and falls back to reading `{skill-root}/customize.toml`, and by step 9, which reads `{skill-root}/references/*` — all outside the project root.",
+    "guard_snippet": "Scope the rule: never write outside `{project-root}`; reads outside it are limited to `{skill-root}` files a step names. State that a missing `{project-root}/_bmad/scripts` means reading `{skill-root}/customize.toml` in place, and that reaching `_bmad/` through `{skill-root}/..` is forbidden.",
+    "potential_consequence": "Three graded runs (continue-with-ledger, role-explicit-qa, fix-trivial-ready) resolved `{skill-root}/../../../_bmad/scripts/...` into the authoring repo to find the resolver, which SKILL.md:154 forbids. The rule is either ignored as already false or blocks the model's own activation; in a symlinked install the two readings disagree.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-08",
+    "lens": "adversarial",
+    "location": "SKILL.md:153, evals/README.md:68-70",
+    "trigger_condition": "The eval guardrail names `case.json` and `prompt.txt`, while this repo's metadata is `evals/cases.json`; it also calls \"any search whose results include `evals/`\" a violation, an event the model cannot avoid when the harness symlinks the whole skill (evals included) into the project.",
+    "guard_snippet": "Name the real files (evals/cases.json, evals/queries.json, evals/adapter.json, and the _bmad-output fixture), state that the rule is about opening their contents, and enumerate what a skill-root listing may show. Make the runner stage a pruned skill copy so the boundary is enforced rather than described.",
+    "potential_consequence": "The rule is unenforceable as written and untestable where it matters: one graded run's skill-root `ls` printed `evals` and was passed by two graders and failed by none, while a different grader held feature-one-session's `find .agents -maxdepth 3` to be a violation. Contamination detection is grader-dependent.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-09",
+    "lens": "edge-case-hunter",
+    "location": "references/role-config.toml:18,20,24,25,30,32 and SKILL.md:104-107",
+    "trigger_condition": "`roles.*.name` and `roles.*.references` are validated by `validate_role_config` but never emitted or read; step 9 builds the overlay paths from the role id (`references/<role>/phase-map.md`), so a config that points a role at different files has no effect.",
+    "guard_snippet": "Emit `references` in `summary.current_role` and have step 9 load the configured files, or delete both keys from the TOML and its validator.",
+    "potential_consequence": "A customised install (a fourth role, or QA pointed at a renamed overlay directory) validates cleanly and then loads paths the config never chose, or a path that does not exist, while the file advertises itself as the single source.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-10",
+    "lens": "adversarial",
+    "location": "SKILL.md:3,28 vs references/role-config.toml [roles]",
+    "trigger_condition": "The accepted role set is hardcoded as `pm|dev|qa` in the description and activation step 4, while the script's `normalize_role` accepts any role declared in `[roles]` and `[phase_roles]` may assign it.",
+    "guard_snippet": "Say \"accept the roles listed in `references/role-config.toml`; `pm|dev|qa` are the shipped defaults\" and keep the hardcoded list only as an example.",
+    "potential_consequence": "A project that adds a role for a customised config passes the script, appears in `summary`, and is then rejected as invalid by a model following SKILL.md step 4.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-11",
+    "lens": "edge-case-hunter",
+    "location": "scripts/sdlc_plan.py:2490-2493 (validate), :579-600 (resolve_current_role)",
+    "trigger_condition": "`validate` only checks that `role_override` is a string. A hand-edited or renamed role (e.g. `\"bogus\"`) passes, and `resolve_current_role` returns it as `current_role` with source `override`, making `role_allowed` false for every action.",
+    "guard_snippet": "Reject a `role_override` that is not in `role_names()` in `validate`, and `fail()` on it in `resolve_current_role`, mirroring `assert_phase_mapped`.",
+    "potential_consequence": "A workstream becomes unusable with no error naming the cause, and the close note records the phantom role as the closer.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-12",
+    "lens": "adversarial",
+    "location": "scripts/sdlc_plan.py:2834-2837 (cmd_role) vs references/ledger-schema.md:256",
+    "trigger_condition": "ledger-schema says paused and done workstreams refuse writes; `role --clear` is allowed on a paused workstream because the pause guard runs only when `not args.clear`.",
+    "guard_snippet": "Either refuse `--clear` on a paused workstream too, or amend ledger-schema to \"a paused workstream refuses every write except resuming and clearing the role override\".",
+    "potential_consequence": "A reader trusting the schema assumes `role --clear` fails and plans a resume that silently changes persisted state; the only two statements of the rule disagree and the script follows the undocumented exception.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-13",
+    "lens": "adversarial",
+    "location": "references/phase-map.md:108-109 and scripts/sdlc_plan.py:386-408",
+    "trigger_condition": "`build.auto` and `build.loop` list `build.ticket` in the Gate column, but neither is a gate action and neither appears in `summary`, so no command records which of `build.ticket`/`build.auto`/`build.loop` satisfied the gate.",
+    "guard_snippet": "Write `-` in the Gate column with a note that running them records `build.ticket` when it runs, or wire them so `optional_actions` can offer them.",
+    "potential_consequence": "The table reads as \"this action passes build.ticket\", inviting the model to treat an unattended batch build as satisfying a gate whose criteria demand Given/When/Then ACs and a named verification.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-14",
+    "lens": "adversarial",
+    "location": "scripts/sdlc_plan.py:5833-5852, scripts/tests/test_role_resolution.py:695-721",
+    "trigger_condition": "`verify-return` compares `returned.role` to `--expect-role` and `returned.action` to `--expect-action`, but never checks that the returned role owns the returned action; the role test asserts that `--expect-role qa --expect-action build.ticket` is accepted.",
+    "guard_snippet": "Resolve the action's owner and append a reason when role and owner differ (skipping role-free actions); change the test to assert that pair is refused.",
+    "potential_consequence": "The check that is supposed to make separation of duties verifiable instead certifies a QA-labelled build return, so a conductor can record a DEV action as validated by QA.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-15",
+    "lens": "adversarial",
+    "location": "scripts/sdlc_plan.py:654-675 (guard_gate_actor), :4441 and :4728 (audit line), gate nodes",
+    "trigger_condition": "Gate ownership is enforced against the gate's owner, never against the ticket's builder, and the acting role is written to the audit trail but not to the gate node. A single DEV session can pass `ticket`, then `review`, then `done` with `--as dev --reason`.",
+    "guard_snippet": "Store `actor` on the gate node and refuse `review`/`done` when the actor equals `tickets.<id>.gates.ticket.actor` (\"the ticket was built by <role>; another role must review it\").",
+    "potential_consequence": "The prose guarantee (SKILL.md:22, gate-matrix.md:15) is stronger than the mechanism: self-approval is possible and leaves no artifact that `validate` or a later reviewer can inspect.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-16",
+    "lens": "adversarial",
+    "location": "scripts/sdlc_plan.py:4059-4071 (cmd_set), :3562-3584 (_written_gate)",
+    "trigger_condition": "Only `gates.*` and `tickets.*.gates.*` writes go through `guard_gate_actor`. `set phases.<phase>.status done` — the write that triggers a role handoff — returns `None` from `_written_gate`, so it records no actor and needs no reason when a different role performs it.",
+    "guard_snippet": "For `phases.<p>.status` writes to `done`/`skipped`, resolve `acting_role`, log it, and require `--reason` when the actor differs from the phase's owner role.",
+    "potential_consequence": "A DEV session can move the workstream into QA territory and the ledger shows a phase advance with no actor; the handoff contract's trigger is the one write with no ownership check.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-17",
+    "lens": "edge-case-hunter",
+    "location": "scripts/sdlc_plan.py:2792-2813 (workstream_briefs)",
+    "trigger_condition": "`workstreams_detail[].next_action` is the raw computed dict, so in one payload `next_action` means two shapes: the top-level one carries role/role_free/role_allowed/source, the per-workstream one carries none.",
+    "guard_snippet": "Annotate each brief's next action for that workstream's resolved role, or rename the nested key to `next_action_raw` and document it.",
+    "potential_consequence": "menu.md renders other workstreams from this list; a missing `role_allowed` reads as \"not blocked\", so the dashboard can advertise another workstream's foreign-role action as takeable.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-18",
+    "lens": "adversarial",
+    "location": "scripts/sdlc_plan.py:342-376 (DEFAULT_ROLE_CONFIG), :485-495",
+    "trigger_condition": "The script embeds a literal copy of the ownership map and silently uses it when `references/role-config.toml` is absent, so the \"single source of truth\" has a runtime fallback.",
+    "guard_snippet": "Make a missing role config a hard failure, or generate the fallback from the TOML at package time and keep the equality test as the only duplication.",
+    "potential_consequence": "A pruned install or copied script resolves ownership from a map nobody edits; the conductor reports a `current_role` that contradicts the documented source. `test_default_config_matches_the_toml` pins the copy in the authoring repo, not the behaviour when the file is missing.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-19",
+    "lens": "verification-gap",
+    "location": "scripts/tests/test_sdlc_plan.py:23-68",
+    "trigger_condition": "The main suite hardcodes its own ownership map (`ticket/tests -> dev`, `review/done -> qa`, phase gates `pm` or `qa`) and appends `--as <owner>` to every gate write, so `guard_gate_actor` never sees a foreign actor in the 3,000-line suite.",
+    "guard_snippet": "Derive the `--as` value from the imported resolver, as the role suite does, and keep the guard's own negative test separate.",
+    "potential_consequence": "A regression in ownership resolution, or a customised role-config, is masked: the suite stays green while `summary` would block the same write.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-20",
+    "lens": "verification-gap",
+    "location": "scripts/sdlc_plan.py:4068-4071 (phase-gate guard)",
+    "trigger_condition": "No test writes a phase gate with a mismatched actor. The foreign-role test uses the `ticket` command only, so deleting the `set` path's guard leaves the suite green.",
+    "guard_snippet": "As DEV on a fix workstream, write `gates.verify.trace` passed `--as qa` without `--reason` and assert refusal; repeat with a reason and assert the audit line names qa.",
+    "potential_consequence": "Any role can pass `plan.requirements`, `verify.trace`, or another phase gate with no handoff, breaking the one-role-at-a-time guardrail with no failing test.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-21",
+    "lens": "verification-gap",
+    "location": "scripts/sdlc_plan.py:2068-2075, scripts/tests, evals/cases.json",
+    "trigger_condition": "Nothing asserts a `summary` whose `next_action.action` is `<phase>.unblock`; the branch can be deleted or inverted undetected, and no eval exercises a phase-blocked summary.",
+    "guard_snippet": "Block a phase (via reconcile or `set phases.verify.status --value blocked`) and assert next_action is `{action: verify.unblock, gate: null, role: null, role_free: true, role_allowed: true}` and is not `close.mark_done`.",
+    "potential_consequence": "A blocked phase recommends the wrong action and the conductor closes or stalls a blocked workstream; a prior review already recorded a real run failing with `build.unblock`.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-22",
+    "lens": "verification-gap",
+    "location": "scripts/sdlc_plan.py:3024-3046 (phase-scoped gate lists)",
+    "trigger_condition": "Only the flat top-level `required_open`/`conditional_open`/`optional_open` lists are asserted, never the per-phase copies that menu.md renders.",
+    "guard_snippet": "Assert `phases[i].required_open` holds only that phase's required ids, and that `phases[i].conditional_open`/`open_gates`/`blocked_gates` exclude later-phase ids.",
+    "potential_consequence": "A regression that copies the totals into every phase entry makes a locked or optional-only phase look blocked; the dashboard misleads the human at the gate and the suite stays green.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-23",
+    "lens": "verification-gap",
+    "location": "scripts/sdlc_plan.py:5843-5852, scripts/tests/test_role_resolution.py:679-721",
+    "trigger_condition": "Only a matching `--expect-action` is exercised; no test supplies a mismatched action, so a comparison that never reports a mismatch passes.",
+    "guard_snippet": "Return status done, role qa (correct), action `build.review`, pass `--expect-action build.ticket`, and assert `ok:false` with the action-mismatch reason.",
+    "potential_consequence": "`verify-return` can accept a return produced for a different action than the conductor handed off, which SKILL.md:130 and handoff-protocol.md promise it rejects.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-24",
+    "lens": "verification-gap",
+    "location": "scripts/sdlc_plan.py:2258-2364 (init model change), :2839-2843 (role --clear)",
+    "trigger_condition": "`init --model <changed>` on an existing ledger is never tested for the paused/done refusal and the reopen-needs-reason path; `role --clear` is never invoked by any test, only reached implicitly through resume.",
+    "guard_snippet": "Add an init-on-existing-ledger test that asserts the refusal and then the reasoned model change, and a `role --clear` test asserting role_source returns to `phase` and the audit line records the clear.",
+    "potential_consequence": "A model change on a paused or partly decided ledger can silently rewrite derived levels and reopen phases with no reason recorded, while the suite stays green.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-25",
+    "lens": "verification-gap",
+    "location": "skills/bmad-sdlc-module/scripts/package.sh:34-84; scripts/tests/test_sdlc_plan.py:4011-4022",
+    "trigger_condition": "`package.sh --check` regenerates the tree with the same copy rules and diffs it, so it proves sync, not contents. Build mode asserts only `SKILL.md` and `scripts/sdlc_plan.py` exist.",
+    "guard_snippet": "Assert the packaged tree contains every file SKILL.md's reference table names, `references/role-config.toml`, `customize.toml`, `assets/plan-template.yaml`, and the shipped tests.",
+    "potential_consequence": "A module missing `references/role-config.toml` or an overlay ships green: the model loads files that are absent and `role_config()` falls back to `DEFAULT_ROLE_CONFIG` instead of failing. The module is currently in sync, so this is a guard gap, not live drift.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-26",
+    "lens": "verification-gap",
+    "location": "evals/cases.json (all cases), evals/README.md",
+    "trigger_condition": "Grading all 14 cases shows the rubrics rest mainly on echo and presence checks: track/size are dictated by the prompt; \"JSON includes ledger, memlog, phase, assumptions\" passes on empty values; several assertions are purely negative. Nothing grades the audit trail, `assumptions` truthfulness, or headless field-set fidelity.",
+    "guard_snippet": "Add assertions for: the memlog records the block/override; `assumptions` match detector output; the emitted block's key set matches headless.md; `status` is derived from `role_allowed`/`blocked_by` rather than echoed.",
+    "potential_consequence": "A run that prints the right shape and writes a stub ledger, or fabricates its assumptions, scores full marks. One grader showed a helper script hardcoding `status: ready` still passed the role-control case.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-27",
+    "lens": "verification-gap",
+    "location": "SKILL.md:149-152, evals/cases.json",
+    "trigger_condition": "Three model-only guardrails (consent before commit/push/install, `init --force` never headless, capture out-of-scope requests) have no unit test by construction and no eval input that could exercise them.",
+    "guard_snippet": "Add three small cases: an out-of-scope request that must be captured and not acted on; \"reset the plan with --force\" that must refuse in headless; a commit-and-push request that must ask first.",
+    "potential_consequence": "A run can act on scope it was told to capture, run a destructive `init --force`, or commit without consent, and no verification would flag it.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-28",
+    "lens": "edge-case-hunter",
+    "location": "scripts/tests/test_role_resolution.py:114-137",
+    "trigger_condition": "The `cases` dict uses the key \"unknown role\" twice, so Python keeps only the `[track_roles]` entry and the `[phase_roles]` unknown-role validation case never runs.",
+    "guard_snippet": "Use distinct labels (\"phase_roles unknown role\", \"track_roles unknown role\") or a list of (label, config) tuples.",
+    "potential_consequence": "The branch that rejects an unknown owner in `[phase_roles]` is reported as covered but is dead — the branch a renamed role hits first.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-29",
+    "lens": "edge-case-hunter",
+    "location": "scripts/sdlc_plan.py:4526-4540 (phase evidence write)",
+    "trigger_condition": "`append phases.<phase>.evidence` checks containment but not existence, and phase evidence is append-only with no removal command.",
+    "guard_snippet": "For an evidence append, require an existing non-empty file inside the project root, or provide an explicit remove-own-evidence path.",
+    "potential_consequence": "One typo inside the root permanently satisfies nothing yet blocks reconcile and `done`, with no supported way to correct it.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-30",
+    "lens": "edge-case-hunter",
+    "location": "scripts/sdlc_plan.py:4861-4895",
+    "trigger_condition": "`done` fails when the project root cannot be inferred, before the evidence scan, so the later `elif any(artifacts ...) or ...: fail(\"pass --project-root ...\")` branch is unreachable dead code with the same message.",
+    "guard_snippet": "Delete the unreachable elif, or move the inference failure after the evidence check so it only fires when there is evidence to validate.",
+    "potential_consequence": "Misleading maintenance surface: a reader believes there are two recovery paths when only one exists. (The lens reported this as \"the workstream cannot close\"; the actual consequence is the dead branch, since `--project-root` always resolves it.)",
+    "reproduced": true
+  },
+  {
+    "id": "R12-31",
+    "lens": "edge-case-hunter",
+    "location": "scripts/sdlc_plan.py:450-474 (validate_role_config)",
+    "trigger_condition": "A `[track_roles]` or `[track_action_overrides]` key naming a track outside greenfield/feature/fix/audit is not rejected.",
+    "guard_snippet": "Reject an unknown track key in both tables with `RoleConfigError` naming it.",
+    "potential_consequence": "A typo validates silently and the track override never applies, so the phase mapping quietly decides ownership instead.",
+    "reproduced": false
+  },
+  {
+    "id": "R12-32",
+    "lens": "edge-case-hunter",
+    "location": "scripts/sdlc_plan.py:2058-2070 (first_blocking -> next_action.reason)",
+    "trigger_condition": "A required or conditional gate decided as `overridden` (or `skipped` without a reason) is reported as \"an open gate\", because only `blocked` and `skipped` get a distinct label.",
+    "guard_snippet": "Map the state explicitly: blocked -> blocked, skipped -> \"skipped\" (or \"skipped without a reason\"), overridden -> \"overridden\", else open.",
+    "potential_consequence": "The menu and headless block misdirect the user to \"pass the open gate\" when the gate was already overridden, hiding that a required gate was skipped.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-33",
+    "lens": "edge-case-hunter",
+    "location": "scripts/sdlc_plan.py:2878-2883 (summary with --project-root)",
+    "trigger_condition": "`summary --project-root` on a missing or wrong directory reports `skill_installed: false` for every action because `read_skills` returns nothing.",
+    "guard_snippet": "Fail when the given project root is not a directory, rather than degrading every skill to missing.",
+    "potential_consequence": "The conductor tells the user to reinstall BMAD because a path was mistyped, and an install bug is indistinguishable from a bad argument.",
+    "reproduced": false
+  },
+  {
+    "id": "R12-34",
+    "lens": "structure",
+    "location": "references/handoff-protocol.md:156-229",
+    "trigger_condition": "The file's Contents lists only the first half; the second half sits after a `---` divider, is titled like a bolt-on (\"Artifact-Driven Handoff Protocol (Role-Based)\"), and holds the section declared to be \"the single authority for role transitions\".",
+    "guard_snippet": "Move Role Transitions and Headless JSON above the divider, index every heading in Contents, and delete the divider.",
+    "potential_consequence": "The model loads this file at activation and at every handoff but may treat the role-transition authority as an appendix; the Contents is an incomplete index of the file it summarizes.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-35",
+    "lens": "structure",
+    "location": "SKILL.md:119-120 vs references/handoff-protocol.md:162-167,224-229",
+    "trigger_condition": "The handoff contract exists twice: the subagent's flags and payload in both, and `No session summary passed - only ledger artifacts` verbatim in both.",
+    "guard_snippet": "Keep one block in handoff-protocol.md and reduce SKILL.md's step to a pointer plus its digests/flags.",
+    "potential_consequence": "Adding a flag or artifact rule to one copy leaves the model with two contradictory instructions and no precedence, since `summary` does not speak to the brief's contents.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-36",
+    "lens": "structure",
+    "location": "references/headless.md:16 vs references/handoff-protocol.md:188,213",
+    "trigger_condition": "The blocked-handoff block's exact shape is claimed by both files: headless.md points to handoff-protocol.md §Headless JSON, which points back to headless.md §Emitted block, and handoff-protocol calls its own example abridged while claiming it is \"the only blocked-handoff shape\".",
+    "guard_snippet": "Give the block one owner with the full field list and worked example; the other file keeps a one-line pointer.",
+    "potential_consequence": "Neither file is loadable alone, and the model must reconcile which parts are canonical at the one moment a run is blocked.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-37",
+    "lens": "structure",
+    "location": "references/pm/phase-map.md:19, pm/gate-matrix.md:10, dev/phase-map.md:23, dev/gate-matrix.md:14, qa/phase-map.md:18, qa/gate-matrix.md:11, qa/solution-phase.md:45",
+    "trigger_condition": "Seven overlay sections restate a handoff condition that the transition table already encodes.",
+    "guard_snippet": "Collapse them to a single pointer, or move the per-role condition into a column of the one table.",
+    "potential_consequence": "Seven silent drift points against the table that calls itself the single authority; each must be edited whenever a transition changes.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-38",
+    "lens": "structure",
+    "location": "SKILL.md:104-110,159-178; references/headless.md, ledger-schema.md, version-adapters.md",
+    "trigger_condition": "§References says \"load only what the current step needs\", but activation step 9 unconditionally loads phase-map, gate-matrix, handoff-protocol and both overlays (~7,000 words, roughly half the set). The table also conflates files the model reads with files passed as script arguments (`assets/plan-template.yaml`, `role-config.toml`) and omits `customize.toml`.",
+    "guard_snippet": "Split the table into \"activation set\" and \"step-triggered\"; move script arguments to a \"passed to sdlc_plan.py, never read\" note; add customize.toml.",
+    "potential_consequence": "The model cannot tell which rows are already covered, and the on-demand policy is inert for the half of the documentation that loads every time.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-39",
+    "lens": "structure",
+    "location": "SKILL.md:117-119,132 (loop steps 4, 5, 8)",
+    "trigger_condition": "The role-mismatch handler (step 8) comes after handoff preparation (step 5) and the ledger write (step 7), though it governs whether either should happen.",
+    "guard_snippet": "Fold step 8 into step 4: check role_allowed, then hand off or persist a role change, then prepare the brief.",
+    "potential_consequence": "A linear read prepares a handoff before reaching the rule that says the action belongs to another role, so the first action can be taken under the wrong role.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-40",
+    "lens": "structure",
+    "location": "SKILL.md:180; references/menu.md:112; references/ledger-schema.md:181",
+    "trigger_condition": "The precedence rule lives as the last paragraph of a section titled \"References\" (a loading table), and the only definition plus clearing procedure for `<phase>.unblock` lives in menu.md, which headless never loads.",
+    "guard_snippet": "Give precedence its own section after §Resolution rules; move the unblock definition and its `set` recipe into ledger-schema.md §Summary shape.",
+    "potential_consequence": "A scanning model may never read the conflict-resolution rule, and a headless run cannot learn how to clear a blocked phase.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-41",
+    "lens": "prose",
+    "location": "references/gate-matrix.md:19,39",
+    "trigger_condition": "The prose refers to \"the `Level` column\", but the header names it `Level by track and size`; no column is called `Level`.",
+    "guard_snippet": "Rename the header to `Level` (keeping the track/size detail in the prose) or refer to it as `Level by track and size`.",
+    "potential_consequence": "The model scans for a column that does not exist and may fall back to the stored cache the same paragraph tells it not to trust.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-42",
+    "lens": "prose",
+    "location": "SKILL.md:12,79,157; references/ledger-schema.md:5; assets/plan-template.yaml:3-4; customize.toml:23",
+    "trigger_condition": "\"Plan\" names the ledger (\"the ledger is an overlay\", \"never start a blank plan\", \"keep the plan portable\") and also the `plan` phase and the planning artifacts.",
+    "guard_snippet": "Use \"ledger\" for the ledger in every one of those places; keep \"plan\" for the phase and its artifacts.",
+    "potential_consequence": "\"Never start a blank plan over real artifacts\" can be read as the Plan phase rather than ledger reconstruction, which is the exact failure the line guards against.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-43",
+    "lens": "prose",
+    "location": "SKILL.md:12,106,174-176; references/ledger-schema.md:5",
+    "trigger_condition": "\"Overlay\" names both the ledger's relationship to BMAD artifacts and the `references/<role>/` files.",
+    "guard_snippet": "Reserve \"overlay\" for the role files; say the ledger \"records SDLC state only\".",
+    "potential_consequence": "The model loads a role overlay believing it is loading the ledger's overlay layer, or treats the ledger as the place for role deltas.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-44",
+    "lens": "prose",
+    "location": "references/handoff-protocol.md:61-62; SKILL.md:118; assets/plan-template.yaml:25",
+    "trigger_condition": "The brief template says \"Do not modify <resolved audit path>\", where `audit` is also the track and an action, and the sentence gives no clue that it means the memlog.",
+    "guard_snippet": "Write \"<resolved audit trail (memlog) path>\" and pair it with the ledger path in the same sentence.",
+    "potential_consequence": "A subagent reads the rule as scoped to audit-track work and edits the trail on other tracks, or refuses to touch build artifacts believing them \"the audit path\".",
+    "reproduced": true
+  },
+  {
+    "id": "R12-45",
+    "lens": "prose",
+    "location": "SKILL.md:28-34",
+    "trigger_condition": "Three senses of \"override\" appear within six lines: a persisted `role_override`, a \"track override\", and gate overrides that need `--reason`.",
+    "guard_snippet": "Say \"track rule (audit -> QA)\" for the mapping and \"longest matching action-id prefix\" for ownership; keep \"override\" for the reasoned gate or role exception.",
+    "potential_consequence": "The model looks for a track override value to set, or treats an audit action as an exception that needs a reason.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-46",
+    "lens": "prose",
+    "location": "references/handoff-protocol.md:67-70",
+    "trigger_condition": "The return template places unions unquoted inside JSON: `\"status\": \"done | blocked | needs_input\"`, `\"role\": \"pm | dev | qa\"`, while the adjacent `action` field uses `<...>` placeholders.",
+    "guard_snippet": "Use `<done|blocked|needs_input>` and `<pm|dev|qa>` consistently and add \"fill `<...>`; never copy them literally\".",
+    "potential_consequence": "The model emits the union string verbatim and `verify-return` rejects a return the model believes was correct.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-47",
+    "lens": "prose",
+    "location": "SKILL.md:22,34; references/gate-matrix.md:15",
+    "trigger_condition": "The role-free set differs between two adjacent statements in SKILL.md (one omits `advisory.*`, the other includes it), and \"QA ... never builds, reviews, and closes its own work\" leaves the negation scope ambiguous.",
+    "guard_snippet": "State the role-free set once in both places as `advisory.*`, `close.mark_done`, `<phase>.unblock`; say \"no single role performs all three on the same work\".",
+    "potential_consequence": "The model refuses an `advisory.*` action as foreign, or reads the prohibition as \"QA may not build\" and blocks a legal QA build.",
+    "reproduced": true
+  },
+  {
+    "id": "R12-48",
+    "lens": "prose",
+    "location": "references/ledger-schema.md:181,262; references/headless.md:29",
+    "trigger_condition": "Single sentences chain four to six obligations separated by semicolons or em dashes (the `next_action` cell, the hand-edit fallback, and the emitted-block rule).",
+    "guard_snippet": "One rule per sentence or a short bullet list; in the fallback, cite §Field rules instead of restating four of them.",
+    "potential_consequence": "A clause inside a run-on (append-only decisions, the sibling lock) is skipped without the model noticing it missed one.",
+    "reproduced": true
+  }
+]

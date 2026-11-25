@@ -4,6 +4,7 @@
   { "query": "where are we in the delivery lifecycle?", "should_trigger": true },
   { "query": "run the whole BMAD flow for this feature", "should_trigger": true },
   { "query": "audit our tests and code quality end to end", "should_trigger": true },
+  { "query": "continue the SDLC as the QA role", "should_trigger": true },
   { "query": "one skill to run PRD, architecture, build, and tests", "should_trigger": true },
   { "query": "write a PRD for my checkout feature", "should_trigger": false },
   { "query": "use bmad-prd to write the requirements for checkout", "should_trigger": false },

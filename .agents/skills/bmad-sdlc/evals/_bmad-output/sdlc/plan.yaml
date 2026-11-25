@@ -1,0 +1,183 @@
+# bmad-sdlc runtime ledger
+# Owner: the bmad-sdlc skill. BMAD artifacts remain the source of truth for
+# ticket/story status; this file stores only the SDLC overlay (position, gates,
+# decisions, pointers). Committed to git. The append-only audit trail lives in
+# .memlog.md beside this file.
+schema: bmad-sdlc/1
+project: verify-menu
+created: '2026-11-24T17:05:13+05:30'
+updated: '2026-11-24T17:05:27+05:30'
+
+bmad:
+  model: v6               # v6 | current | unknown
+  memlog: _bmad-output/sdlc/.memlog.md # recorded at init; --memlog overrides
+  hub:                    # bmad | bmad-help
+  output_folder: _bmad-output
+  planning_artifacts: _bmad-output/planning-artifacts
+  implementation_artifacts: _bmad-output/implementation-artifacts
+  test_artifacts: _bmad-output/test-artifacts
+
+active_workstream: ws-001
+
+# Workstreams are keyed by id, e.g. ws-001. See references/ledger-schema.md.
+# Each workstream carries: name, track, size, status, phases, gates (with
+# level), tickets (per-ticket gates), decisions, and a best-effort next cache.
+# An audit workstream uses one synthetic ticket, `audit`, whose `review` gate
+# is the required code review.
+workstreams:
+  ws-001:
+    name: verify-menu
+    track: feature
+    size: epic
+    status: active
+    started: '2026-11-24T17:05:13+05:30'
+    updated: '2026-11-24T17:05:13+05:30'
+    current_phase: verify
+    artifacts:
+      spec:
+      prd:
+      ux:
+      architecture:
+      stories:
+      tickets:
+      sprint_plan:
+      test_design:
+      test_framework:
+      ci:
+      trace:
+    phases:
+      plan:
+        status: done
+        gate: required
+        evidence: []
+        note: ''
+      solution:
+        status: skipped
+        gate: conditional
+        evidence: []
+        note: 'mature stack'
+      build:
+        status: done
+        gate: required
+        evidence: []
+        note: ''
+      verify:
+        status: pending
+        gate: required
+        evidence: []
+        note: ''
+      close:
+        status: pending
+        gate: optional
+        evidence: []
+        note: ''
+    gates:
+      plan:
+        requirements:
+          status: passed
+          level: required
+          decided_at: '2026-11-24T17:05:14+05:30'
+          override_reason:
+          actor: pm
+        stories:
+          status: passed
+          level: required
+          decided_at: '2026-11-24T17:05:15+05:30'
+          override_reason:
+          actor: pm
+        sprint:
+          status: passed
+          level: required
+          decided_at: '2026-11-24T17:05:16+05:30'
+          override_reason:
+          actor: pm
+        ux:
+          status: overridden
+          level: conditional
+          decided_at: '2026-11-24T17:05:17+05:30'
+          override_reason: not applicable
+          actor: pm
+        architecture:
+          status: overridden
+          level: conditional
+          decided_at: '2026-11-24T17:05:18+05:30'
+          override_reason: not applicable
+          actor: pm
+      solution:
+        test_design:
+          status: overridden
+          level: conditional
+          decided_at: '2026-11-24T17:05:19+05:30'
+          override_reason: mature stack
+          actor: qa
+        framework:
+          status: overridden
+          level: conditional
+          decided_at: '2026-11-24T17:05:20+05:30'
+          override_reason: mature stack
+          actor: qa
+        ci:
+          status: overridden
+          level: conditional
+          decided_at: '2026-11-24T17:05:21+05:30'
+          override_reason: mature stack
+          actor: qa
+      build: {}
+      verify:
+        trace:
+          status: open
+          level: required
+          decided_at:
+          override_reason:
+        nfr:
+          status: open
+          level: conditional
+          decided_at:
+          override_reason:
+        test_review:
+          status: open
+          level: conditional
+          decided_at:
+          override_reason:
+      close:
+        retro:
+          status: open
+          level: optional
+          decided_at:
+          override_reason:
+        walkthrough:
+          status: open
+          level: optional
+          decided_at:
+          override_reason:
+    tickets:
+      T1:
+        title: ''
+        gates:
+          ticket:
+            status: passed
+            decided_at: '2026-11-24T17:05:23+05:30'
+            override_reason:
+            actor: dev
+          tests:
+            status: overridden
+            decided_at: '2026-11-24T17:05:24+05:30'
+            override_reason: no baseline
+            actor: dev
+          review:
+            status: passed
+            decided_at: '2026-11-24T17:05:26+05:30'
+            override_reason:
+            actor: qa
+          done:
+            status: passed
+            decided_at: '2026-11-24T17:05:27+05:30'
+            override_reason:
+            actor: qa
+    decisions: []
+    next:
+      phase: verify
+      gate: verify.trace
+      action: verify.trace
+      skill: bmad-testarch-trace
+      reason: verify.trace is a required open gate.

@@ -1,0 +1,51 @@
+# Role-based SDLC configuration.
+#
+# This file is the single source of truth for role ownership. The ledger helper
+# (`scripts/sdlc_plan.py`) reads it to report `current_role`, `next_action.role`
+# and `next_action.role_allowed` from `summary`. It is required: a missing or
+# malformed file fails the command instead of falling back to a built-in copy.
+# Do not duplicate the mapping in prose; point at this file instead.
+#
+# A role's id names its overlay directory: role `qa` loads
+# `references/qa/phase-map.md` and `references/qa/gate-matrix.md`.
+#
+# Ownership resolution for an action id, in order:
+#   1. [track_action_overrides] key "<track>.<action>"
+#   2. [roles.*] action_prefixes, longest prefix wins
+#   3. no match -> unknown action (the helper fails; it never guesses)
+#
+# Phase-to-role detection uses [track_roles] first and [phase_roles] after that.
+# Role-free actions (advisory.*, close.mark_done, <phase>.unblock) are open to
+# every role and need no owner here.
+
+[roles.pm]
+action_prefixes = ["frame.", "plan."]
+
+[roles.dev]
+action_prefixes = ["build."]
+
+# QA owns the review and done transitions as well as the solution, verify, and
+# close phases: the same role must not build, review, and approve its own work.
+[roles.qa]
+action_prefixes = ["build.review", "build.done", "solution.", "verify.", "close."]
+
+# Phase-to-role mapping for auto-detection.
+[phase_roles]
+plan = "pm"
+solution = "qa"
+build = "dev"
+verify = "qa"
+close = "qa"
+
+# Track overrides win over [phase_roles]: an audit is a QA review that starts
+# in the build phase, so the whole track belongs to QA.
+[track_roles]
+audit = "qa"
+
+# A track-specific action owner. Empty by default: QA's longest prefix already
+# owns build.review on every track, including an audit.
+[track_action_overrides]
+
+# Advisory actions are offered to whichever role is active.
+[advisory]
+prefix = "advisory."

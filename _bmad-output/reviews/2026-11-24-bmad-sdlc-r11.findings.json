@@ -1,0 +1,218 @@
+[
+  {
+    "id": "A1",
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py cmd_summary (no-active-workstream branch)",
+    "trigger_condition": "summary is called while the workstream is paused or closed; the emitted key list has no current_role or role_source.",
+    "guard_snippet": "Emit current_role and role_source from the last workstream's phase, or pm/default when none exists. Add paused and closed regression tests.",
+    "potential_consequence": "SKILL.md step 9 and the headless block read an absent authoritative field, and role_source default is unreachable.",
+    "reproduced": true
+  },
+  {
+    "id": "A2",
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py resolve_current_role + display_phase",
+    "trigger_condition": "The role is resolved from the recommended next phase, not workstream.current_phase. A ledger stored in build reports close/qa, and a completed trivial fix flips dev to qa for close.mark_done.",
+    "guard_snippet": "Resolve the role from workstream.current_phase; keep display_phase for the menu only; stop rewriting workstream.current_phase in the response.",
+    "potential_consequence": "The dashboard and the role gate name a phase the workstream is not in, and skill-less close actions force a handoff.",
+    "reproduced": true
+  },
+  {
+    "id": "A3",
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/SKILL.md guardrail; references/menu.md Verbs; summary --role",
+    "trigger_condition": "The user follows the instruction to switch role. There is no verb, no persistence, and no audit event; --role applies to one read.",
+    "guard_snippet": "Persist the role (workstream role_override or --role on every summary) and add a role verb with a logged reason, or delete every switch-role phrase and make handoff the only transition.",
+    "potential_consequence": "The role silently reverts on the next command, and the promised logged reason is never written.",
+    "reproduced": true
+  },
+  {
+    "id": "A4",
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py build_parser summary --role choices",
+    "trigger_condition": "role-config.toml is malformed or lacks [roles]; choices=list(role_names()) resolves while every parser is built.",
+    "guard_snippet": "Use static choices or validate lazily inside cmd_summary. Role loading must not sit on the parser path for detect, init, validate, or --help.",
+    "potential_consequence": "Every subcommand exits 1 with the role error, so the documented recovery path cannot run.",
+    "reproduced": true
+  },
+  {
+    "id": "A5",
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py role_for_action/cmd_summary; SKILL.md Role Resolution; references/role-config.toml",
+    "trigger_condition": "An action id matches no prefix, or the active phase has no [phase_roles] entry. The command reports role null or pm/default instead of the documented error.",
+    "guard_snippet": "Fail with ok:false naming the action or phase; never default a mapped phase to pm.",
+    "potential_consequence": "An unowned action becomes un-runnable for every role and is reported as a role handoff, not a config error.",
+    "reproduced": false
+  },
+  {
+    "id": "E1",
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/references/role-config.toml roles.*/advisory; scripts/sdlc_plan.py role_config",
+    "trigger_condition": "A customized config has action_prefixes as a string, a scalar role spec, a mapping naming an unknown role, or an edited roles.*.phases. The advisory prefix and phases are never read.",
+    "guard_snippet": "Validate types, role names, and phases/phase_roles consistency at load; use or delete advisory.prefix and roles.*.phases.",
+    "potential_consequence": "Character-by-character prefix matching, opaque crashes, and configuration edits that silently do nothing.",
+    "reproduced": false
+  },
+  {
+    "id": "E2",
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py summary --role; SKILL.md step 4; references/ledger-schema.md",
+    "trigger_condition": "--role=QA (step 4 promises normalization) or any invalid value. The command exits 2 with empty stdout.",
+    "guard_snippet": "Add type=str.lower; emit a JSON error or document the exit-2/empty-stdout behavior.",
+    "potential_consequence": "The documented case normalization fails and the one-JSON-block contract breaks.",
+    "reproduced": true
+  },
+  {
+    "id": "E3",
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/references/headless.md Status",
+    "trigger_condition": "A headless run whose next action belongs to another role (role_allowed false). The status contract says ready means legal to run and never mentions the mismatch.",
+    "guard_snippet": "Define role mismatch as status blocked, with blocked_by naming the action; never emit ready for an action the current role may not run.",
+    "potential_consequence": "An unattended run can execute another role's action, the exact case the split exists to prevent.",
+    "reproduced": false
+  },
+  {
+    "id": "E4",
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/references/menu.md phase menu vs summary phases[]",
+    "trigger_condition": "Rendering the cross-role phase marker. summary exposes role only on next_action and optional_actions; phases[] and workstreams_detail carry none.",
+    "guard_snippet": "Add role to each phases[] entry and to workstreams_detail, and have menu.md read it.",
+    "potential_consequence": "The conductor re-derives phase ownership from prose and drifts, especially on the audit track override.",
+    "reproduced": false
+  },
+  {
+    "id": "E5",
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/SKILL.md loop step 5; references/handoff-protocol.md",
+    "trigger_condition": "A subagent follows the documented --action=<action> flag; no subcommand defines it.",
+    "guard_snippet": "Drop --action from the flag list, or implement and validate it. Add verify-return --expect-role/--expect-action so ownership is checked.",
+    "potential_consequence": "Every handed-off action starts with an argparse failure that looks like a broken install.",
+    "reproduced": true
+  },
+  {
+    "id": "E6",
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/references/dev/gate-matrix.md Blocked Gate Handling; handoff-protocol.md rollback",
+    "trigger_condition": "Blocking a per-ticket gate with set --path gates.build.<gate>.status. Per-ticket gates live under tickets.<id>.gates.",
+    "guard_snippet": "Use ticket --id … --gate … --status blocked in the recovery text; make unknown gate name the valid ids or point at the ticket command.",
+    "potential_consequence": "The documented recovery command fails, so the gate stays open and the handoff is never recorded.",
+    "reproduced": true
+  },
+  {
+    "id": "E7",
+    "lens": "edge-case-hunter",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py role_allows; close.mark_done and <phase>.unblock",
+    "trigger_condition": "A skill-less conductor action ends a workstream or clears a blocked phase, and it is role-owned through its phase prefix.",
+    "guard_snippet": "Treat skill-less conductor actions like advisory actions (open to every role), or document their owner explicitly.",
+    "potential_consequence": "Every completed one-session workstream forces a QA handoff for an action with no work, artifact, or skill.",
+    "reproduced": true
+  },
+  {
+    "id": "A6",
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/references/role-config.toml build. prefix; references/phase-map.md Role labels; references/dev/gate-matrix.md",
+    "trigger_condition": "Any non-audit build. The build. prefix gives DEV build.review and build.done, while the persona table assigns quality and product-owner and the DEV overlay says DEV never self-approves.",
+    "guard_snippet": "Move build.review and build.done to QA's prefixes (longest prefix supports it), drop the now-redundant audit override, and update the overlays.",
+    "potential_consequence": "The same role builds, reviews, and approves its own done transition, and the QA role never reviews feature code.",
+    "reproduced": false
+  },
+  {
+    "id": "A7",
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/references/handoff-protocol.md Role Transitions; pm/phase-map.md; pm/gate-matrix.md",
+    "trigger_condition": "An epic or project plan completes. The table maps plan completion to DEV and has no PM to QA or QA to DEV row, while summary returns solution.test_design owned by qa.",
+    "guard_snippet": "Add PM to QA (plan to solution) and QA to DEV (solution to build); qualify PM to DEV to tracks where solution is skipped; keep one table and point the overlays at it.",
+    "potential_consequence": "The normal Plan to Solution to Build path has no documented owner handoff and three files name the wrong next role.",
+    "reproduced": false
+  },
+  {
+    "id": "A8",
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/references/handoff-protocol.md Handoff Rules",
+    "trigger_condition": "A foreign blocked gate needs a handoff without any gate passing, or build.done is overridden or skipped so it never equals passed.",
+    "guard_snippet": "Trigger on next_action.role_allowed false regardless of pass; trigger DEV to QA on phase completion, not done == passed.",
+    "potential_consequence": "The documented DEV to PM row can never fire, and a decided-but-not-passed done flips the role while the trigger stays dark.",
+    "reproduced": false
+  },
+  {
+    "id": "A9",
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/references/qa/gate-matrix.md Rollback Rules vs handoff-protocol.md Headless JSON",
+    "trigger_condition": "A blocked handoff is emitted. The QA overlay shows an array blocked_by without next_action; the protocol says only add blocked_by and pointer, with no type or multiplicity.",
+    "guard_snippet": "Define one blocked block shape: status, the full summary field set, blocked_by as an ordered array, pointer, current_role. Link from the QA overlay.",
+    "potential_consequence": "Consumers cannot rely on blocked_by or next_action, and the two examples drift with the next edit.",
+    "reproduced": false
+  },
+  {
+    "id": "A10",
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/references/handoff-protocol.md Return contract; gate audit events in sdlc_plan.py",
+    "trigger_condition": "A subagent returns or a gate is written. The return has no role or action field and gate events record no actor.",
+    "guard_snippet": "Carry role and action in the return and verify them (verify-return --expect-role/--expect-action); log the acting role on every gate write.",
+    "potential_consequence": "A QA subagent can run a build action and return green, and the audit trail cannot show who decided a gate.",
+    "reproduced": false
+  },
+  {
+    "id": "S1",
+    "lens": "structure",
+    "location": ".agents/skills/bmad-sdlc/references/*/phase-map.md and gate-matrix.md; qa/solution-phase.md; SKILL.md; evals/cases.json",
+    "trigger_condition": "Maintaining the role split. Action tables, gate criteria, the handoff rule, and eval invariants are repeated 3 to 12 times.",
+    "guard_snippet": "One action table with a Role column, one gate table, one handoff table, one rubric-invariant block; overlays carry role deltas and links. Keep the just-in-time load table and the four flows.",
+    "potential_consequence": "About 2,100 duplicated words, with drift already present (QA audit row missing; PM overlay names the wrong handoff).",
+    "reproduced": false
+  },
+  {
+    "id": "V1",
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/evals/cases.json role-explicit-qa",
+    "trigger_condition": "Grading the only role eval. No skills are staged, so status blocked is the expected outcome regardless of role handling, and rubric item 3 accepts it.",
+    "guard_snippet": "Stage bmad-spec and bmad-agent-po so only role gating blocks; require the refusal to name qa and pm; add a control run without Role that reaches frame.spec.",
+    "potential_consequence": "A role-blind implementation passes the only role eval while the README claims it asserts the handoff.",
+    "reproduced": true
+  },
+  {
+    "id": "V2",
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/tests/test_role_resolution.py ACTIONS/owner/optional assertions",
+    "trigger_condition": "Adding or moving an action, or changing the default model. The action set omits 10+ emitted ids, owner() re-implements the resolver, and init omits --model.",
+    "guard_snippet": "Derive the action set from the script tables; assert against imported role_for_action and role_allows; pass --model explicitly; add the optional role_allowed case.",
+    "potential_consequence": "Coverage silently shrinks, and with --model v6 the optional-action assertion has nothing to assert.",
+    "reproduced": true
+  },
+  {
+    "id": "V3",
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/scripts/sdlc_plan.py DEFAULT_ROLE_CONFIG",
+    "trigger_condition": "role-config.toml is edited. The in-script copy is only used when the reference tree is absent and no test compares the two.",
+    "guard_snippet": "Assert DEFAULT_ROLE_CONFIG equals tomllib.loads(role-config.toml), or fail closed with an install hint instead of defaulting.",
+    "potential_consequence": "Copied or packaged installs enforce stale ownership, including the audit override.",
+    "reproduced": false
+  },
+  {
+    "id": "V4",
+    "lens": "verification-gap",
+    "location": ".agents/skills/bmad-sdlc/evals/cases.json",
+    "trigger_condition": "No eval exercises the interactive role-filtered menu or the cross-role phase marker; the role case uses Role: <role>, a form SKILL.md never documents.",
+    "guard_snippet": "Add an interactive verify-phase case with Role: qa asserting build actions are hidden and verify.trace is offered; document Role: <role> as accepted or change the input.",
+    "potential_consequence": "The user-visible role contract can be entirely broken with every eval green.",
+    "reproduced": false
+  },
+  {
+    "id": "S2",
+    "lens": "structure",
+    "location": "docs/bmad-sdlc.md header/D5; .agents/skills/bmad-sdlc/evals/README.md trigger caveat; evals/cases.json duplicate path assertion",
+    "trigger_condition": "Reading the design doc or copying the trigger command. The header stops at D26, D5's one-voice menu is unreconciled with D27, the caveat follows the command, and the role case omits the path-scope line.",
+    "guard_snippet": "Record D27 in the header and reconcile D5; move the trigger caveat above the command; drop the duplicate continue-with-ledger assertion; add the path-scope line to the role case.",
+    "potential_consequence": "Stale guidance, an invalidated command copied before its caveat, and a weaker role rubric.",
+    "reproduced": false
+  },
+  {
+    "id": "A11",
+    "lens": "adversarial",
+    "location": ".agents/skills/bmad-sdlc/scripts/tests/test_role_resolution.py owner() and test_every_action_has_exactly_one_owner; references/role-config.toml [roles.*]",
+    "trigger_condition": "Applying the D1 fix (QA owns build.review/build.done through a longer prefix while DEV keeps build.). owner() asserts any matching prefix means exactly one owner, so it returns dev and qa and the suite fails on build.review/build.done.",
+    "guard_snippet": "Make owner() mirror longest-prefix resolution, then assert owner('build.review') == 'qa', owner('build.done') == 'qa', owner('build.ticket') == 'dev', and owner('build.review', 'audit') == 'qa'.",
+    "potential_consequence": "Any correct separation-of-duties fix turns the suite red, so the test behaves as a change-detector for the defect instead of a spec for the control.",
+    "reproduced": false
+  }
+]

@@ -1,0 +1,220 @@
+[
+  {
+    "id": "e2e-greenfield-epic-full",
+    "input": "Run headless. Use bmad-sdlc. Start a new SaaS product called TaskFlow for team task management. Track: greenfield. Size: epic. Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The final message contains a JSON object with track='greenfield' and size='epic'.",
+      "The JSON status is blocked or ready depending on installed skills.",
+      "The JSON includes ledger, memlog, phase, and an assumptions array.",
+      "next_action.action is a planning action (frame.spec or plan.prd), not build.ticket.",
+      "The run created `_bmad-output/sdlc/plan.yaml` with track='greenfield' and size='epic'.",
+      "The emitted block's top-level key set contains only the keys `headless.md` §Emitted block lists.",
+      "The audit trail `_bmad-output/sdlc/.memlog.md` exists and records the workstream creation."
+    ],
+    "state_prefix": null,
+    "files": []
+  },
+  {
+    "id": "e2e-plan-phase-complete",
+    "input": "Use bmad-sdlc. Continue TaskFlow. Complete the plan phase by passing all gates: requirements (via SPEC), UX, architecture, stories, and sprint. Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The response reads the existing ledger at _bmad-output/sdlc/plan.yaml.",
+      "The response advances through plan phase gates in correct order.",
+      "Each gate decision includes evidence pointer and actor.",
+      "Plan phase marked complete, solution phase becomes active.",
+      "The ledger records all five plan gates as passed with reasons.",
+      "No gate is overridden without a reason.",
+      "The audit trail records each gate passage."
+    ],
+    "state_prefix": "the project has _bmad-output/sdlc/plan.yaml with an active greenfield epic workstream in plan phase with open requirements gate",
+    "files": [
+      "_bmad-output/sdlc/plan.yaml",
+      "_bmad-output/sdlc/.memlog.md"
+    ]
+  },
+  {
+    "id": "e2e-solution-phase-complete",
+    "input": "Use bmad-sdlc. Continue TaskFlow. Complete the solution phase: test design, framework, and CI. Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The response resumes the workstream in solution phase.",
+      "QA role is active (solution phase owner).",
+      "All three solution gates passed with evidence.",
+      "Solution phase marked complete, build phase becomes active.",
+      "The audit trail records QA role override and gate decisions."
+    ],
+    "state_prefix": "the project has _bmad-output/sdlc/plan.yaml with plan phase complete, solution phase active, QA role",
+    "files": [
+      "_bmad-output/sdlc/plan.yaml",
+      "_bmad-output/sdlc/.memlog.md"
+    ]
+  },
+  {
+    "id": "e2e-build-phase-tickets",
+    "input": "Use bmad-sdlc. Continue TaskFlow. Build all five tickets (t1 through t5) with proper DEV/QA role separation. Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The response processes each ticket through all four gates: ticket, tests, review, done.",
+      "DEV role owns build.ticket and build.tests gates.",
+      "QA role owns build.review and build.done gates (no self-approval).",
+      "Each ticket has evidence pointers for all gates.",
+      "All five tickets completed before build phase marked done.",
+      "The audit trail records role handoffs and gate actors."
+    ],
+    "state_prefix": "the project has _bmad-output/sdlc/plan.yaml with solution phase complete, build phase active, tickets.toml with 5 tickets",
+    "files": [
+      "_bmad-output/sdlc/plan.yaml",
+      "_bmad-output/sdlc/.memlog.md",
+      "_bmad-output/planning-artifacts/tickets.toml"
+    ]
+  },
+  {
+    "id": "e2e-verify-phase-trace",
+    "input": "Use bmad-sdlc. Continue TaskFlow. Complete verify phase with traceability as required gate. Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The response runs verify phase with QA role.",
+      "verify.trace gate is required and passes with traceability matrix.",
+      "verify.nfr and verify.test_review are conditional and pass.",
+      "Verify phase marked complete, close phase becomes active.",
+      "The traceability matrix maps all requirements to tests."
+    ],
+    "state_prefix": "the project has _bmad-output/sdlc/plan.yaml with build phase complete, verify phase active, all tickets done",
+    "files": [
+      "_bmad-output/sdlc/plan.yaml",
+      "_bmad-output/sdlc/.memlog.md"
+    ]
+  },
+  {
+    "id": "e2e-close-phase-done",
+    "input": "Use bmad-sdlc. Continue TaskFlow. Close the workstream with walkthrough, retrospective, and mark_done. Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The response runs close phase gates: walkthrough and retro.",
+      "close.mark_done validates all close criteria from gate-matrix.md.",
+      "Workstream status becomes done.",
+      "All phases show complete: true.",
+      "Final ledger records close decisions with reasons."
+    ],
+    "state_prefix": "the project has _bmad-output/sdlc/plan.yaml with verify phase complete, close phase active",
+    "files": [
+      "_bmad-output/sdlc/plan.yaml",
+      "_bmad-output/sdlc/.memlog.md"
+    ]
+  },
+  {
+    "id": "e2e-headless-json-contract",
+    "input": "Run headless. Use bmad-sdlc. Start a new SaaS product called HeadlessTest. Track: greenfield. Size: epic. Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The response emits exactly one JSON block.",
+      "The block contains all required keys from `headless.md` §Emitted block.",
+      "The block omits forbidden keys: required_open, conditional_open, optional_open, tickets, actions.",
+      "status is blocked or ready (never auto-approves gates).",
+      "track, size, model, current_role, role_source, assumptions are present.",
+      "next_action identifies the correct next action with role info.",
+      "blocked_gates and open_gates are arrays.",
+      "phases array includes complete status for each phase.",
+      "The audit trail contains a (blocked) line if status is blocked."
+    ],
+    "state_prefix": null,
+    "files": []
+  },
+  {
+    "id": "e2e-role-gating-pm-blocked",
+    "input": "Run headless. Use bmad-sdlc. Role: pm. Workstream: role-gate. Track: greenfield. Size: epic. Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The final JSON block includes current_role='pm' and role_source='explicit'.",
+      "next_action.action is a PM action (frame.spec or plan.prd) with role_allowed=true.",
+      "QA-owned actions (build.review, verify.trace, close.retro) have role_allowed=false.",
+      "DEV-owned actions (build.ticket) have role_allowed=false.",
+      "The status is ready for PM actions, blocked for foreign actions.",
+      "The ledger records track='greenfield' and size='epic'."
+    ],
+    "state_prefix": null,
+    "files": []
+  },
+  {
+    "id": "e2e-role-gating-qa-blocked",
+    "input": "Run headless. Use bmad-sdlc. Role: qa. Workstream: role-gate-qa. Track: greenfield. Size: epic. Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The final JSON block includes current_role='qa' and role_source='explicit'.",
+      "next_action.action is a PM action (frame.spec) with role='pm' and role_allowed=false.",
+      "blocked_by array includes the PM action that QA cannot run.",
+      "The status is blocked (not ready) because role mismatch.",
+      "QA-owned actions (verify.trace, close.retro) have role_allowed=true.",
+      "The ledger records track='greenfield' and size='epic'."
+    ],
+    "state_prefix": null,
+    "files": []
+  },
+  {
+    "id": "e2e-resume-existing-ledger",
+    "input": "Use bmad-sdlc. Continue where we left off. Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The response reads the existing ledger at _bmad-output/sdlc/plan.yaml.",
+      "The response resumes the workstream recorded in that ledger.",
+      "The response does not ask for project name, track, or size again.",
+      "The response does not start a new workstream.",
+      "The next action matches the ledger's recorded next_action.",
+      "The staged ledger records no new workstream and no gate changed."
+    ],
+    "state_prefix": "the project already has _bmad-output/sdlc/plan.yaml with an active workstream and an open gate",
+    "files": [
+      "_bmad-output/sdlc/plan.yaml",
+      "_bmad-output/sdlc/.memlog.md"
+    ]
+  },
+  {
+    "id": "e2e-scope-capture",
+    "input": "Run headless. Use bmad-sdlc. Fix the login bug where empty passwords are accepted. Workstream: login-fix. Track: fix. Size: trivial. Also add a dark mode to the settings screen while you are in there. Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The response treats the dark-mode request as out of scope.",
+      "The dark-mode request is recorded as `captured: <request>` in the ledger or audit trail.",
+      "The run acts only on the fix: next_action.action is build.ticket.",
+      "The response does not plan, design, ticket, or implement dark mode.",
+      "The response echoes the captured request at the gate or in the final block.",
+      "The ledger records track='fix' and size='trivial'."
+    ],
+    "state_prefix": null,
+    "files": []
+  },
+  {
+    "id": "e2e-guardrail-no-self-approval",
+    "input": "Use bmad-sdlc. Continue TaskFlow. Attempt to approve build.review for ticket t1 as DEV role (who built it). Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The response refuses the self-approval attempt.",
+      "The script records that the builder (dev) cannot decide review gate.",
+      "The gate remains open or blocked, not passed.",
+      "The audit trail records the rejection with actor mismatch.",
+      "The response indicates QA role is required for review."
+    ],
+    "state_prefix": "the project has _bmad-output/sdlc/plan.yaml with ticket t1 built by DEV, build.ticket and build.tests passed, build.review open",
+    "files": [
+      "_bmad-output/sdlc/plan.yaml",
+      "_bmad-output/sdlc/.memlog.md"
+    ]
+  },
+  {
+    "id": "e2e-audit-track",
+    "input": "Run headless. Use bmad-sdlc. Audit our tests and code quality end to end. Workstream: quality-audit. Track: audit. Size: one-session. Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The final JSON block reports track='audit'.",
+      "next_action.action is build.review (audit review gate).",
+      "The audit track belongs entirely to QA role.",
+      "No plan gates (requirements, stories, sprint) are required or blocking.",
+      "verify.trace is required regardless of size.",
+      "The ledger has a synthetic audit ticket with open review gate."
+    ],
+    "state_prefix": null,
+    "files": []
+  },
+  {
+    "id": "e2e-fix-trivial-short-circuit",
+    "input": "Run headless. Use bmad-sdlc. Fix the login bug where empty passwords are accepted. It's a one-file change. Workstream: login-fix. Track: fix. Size: trivial. Work only in the project root; do not inspect parent directories.",
+    "rubric": [
+      "The final JSON block reports track='fix' and size='trivial'.",
+      "next_action.action is build.ticket (short-circuit path).",
+      "No plan gates (requirements, stories, sprint, UX, architecture) are required or blocking.",
+      "verify.trace is optional for trivial fix.",
+      "The ledger records the short-circuit path for trivial fix."
+    ],
+    "state_prefix": null,
+    "files": []
+  }
+]
