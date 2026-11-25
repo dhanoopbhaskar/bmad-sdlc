@@ -1,0 +1,133 @@
+# Sprint Plan - Expense Tracker
+# Sprint: 1 (Week 1-2: Foundation)
+# Duration: 2026-11-27 to 2026-12-10
+
+project:
+  name: expense-tracker
+  sprint: 1
+  duration: 2w
+  start_date: 2026-11-27
+  end_date: 2026-12-10
+
+status: in-progress
+
+# Sprint Goals
+goals:
+  - Setup SQLite database with expenses table schema
+  - Implement basic CRUD operations for expenses
+  - Create Add/Edit expense forms
+  - Display expense list view
+  - Basic responsive design
+
+# Stories for Sprint 1
+stories:
+  "EPIC-003-1":
+    title: SQLite Database Setup
+    status: in-progress
+    owner: dev
+    estimate: 2d
+    actual: 0d
+    points: 3
+  "EPIC-003-2":
+    title: Database CRUD Operations
+    status: not-started
+    owner: dev
+    estimate: 3d
+    actual: 0d
+    points: 5
+  "EPIC-001-1":
+    title: Add Expense Form
+    status: not-started
+    owner: dev
+    estimate: 3d
+    actual: 0d
+    points: 5
+
+# Tickets (detailed tasks)
+tickets:
+  "FE-001":
+    id: "FE-001"
+    epic: "EPIC-003-1"
+    title: "Create SQLite database initialization script"
+    description: "Setup database file and create expenses table with proper schema"
+    status: "in-progress"
+    priority: high
+    assignee: dev
+    estimate: 1d
+    story_points: 3
+
+  "FE-002":
+    id: "FE-002"
+    epic: "EPIC-003-1"
+    title: "Define database schema"
+    description: "Design expenses table with columns: id, date, category, amount, description, payment_method"
+    status: "done"
+    priority: high
+    assignee: dev
+    estimate: 0.5d
+    story_points: 1
+
+  "FE-003":
+    id: "FE-003"
+    epic: "EPIC-003-2"
+    title: "Implement Create expense operation"
+    description: "Add function to insert new expense records to SQLite database"
+    status: "done"
+    priority: high
+    assignee: dev
+    estimate: 1d
+    story_points: 3
+
+  "FE-004":
+    id: "FE-004"
+    epic: "EPIC-003-2"
+    title: "Implement Read expenses operation"
+    description: "Add function to query expenses from SQLite database with optional filters"
+    status: "todo"
+    priority: high
+    assignee: dev
+    estimate: 1d
+    story_points: 3
+
+  "FE-005":
+    id: "FE-005"
+    epic: "EPIC-001-1"
+    title: "Build Add Expense form UI"
+    description: "Create React component with form fields for date, category, amount, description, payment method"
+    status: "todo"
+    priority: high
+    assignee: dev
+    estimate: 2d
+    story_points: 5
+
+  "FE-006":
+    id: "FE-006"
+    epic: "EPIC-001-1"
+    title: "Connect form to database"
+    description: "Wire form submission to SQLite insert operation"
+    status: "todo"
+    priority: high
+    assignee: dev
+    estimate: 1d
+    story_points: 5
+
+# Development status
+development_status:
+  # Epics
+  "epic-EPIC-001": "in-progress"
+  "epic-EPIC-002": "todo"
+  "epic-EPIC-003": "in-progress"
+  "epic-EPIC-004": "todo"
+  "epic-EPIC-005": "todo"
+  "epic-EPIC-006": "todo"
+  # Stories
+  "EPIC-003-1": "in-progress"
+  "EPIC-003-2": "not-started"
+  "EPIC-001-1": "not-started"
+
+# Burn-down tracking
+burn_down:
+  total_points: 25
+  planned_points: 11
+  completed_points: 4
+  remaining_points: 11

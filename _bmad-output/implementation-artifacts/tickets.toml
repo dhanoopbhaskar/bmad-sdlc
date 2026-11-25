@@ -1,0 +1,139 @@
+# Expense Tracker - Epics and Stories
+# Created: 2026-11-25
+
+tickets = [
+  # EPIC-001: Core Expense Management
+  { id = "EPIC-001", title = "Core Expense Management", epic = true },
+
+  # Stories under EPIC-001
+  { id = "EPIC-001-1", title = "Add Expense Form", description = "Create a form to add new expenses with all required fields (date, category, amount, description, payment method)", priority = "must", estimate = "3d" },
+  { id = "EPIC-001-2", title = "Edit Expense Form", description = "Create functionality to edit existing expense records", priority = "must", estimate = "2d" },
+  { id = "EPIC-001-3", title = "Delete Expense", description = "Implement expense deletion with confirmation dialog", priority = "must", estimate = "1d" },
+  { id = "EPIC-001-4", title = "Expense List View", description = "Display list of all expenses with sorting capability (by date, amount, category)", priority = "must", estimate = "2d" },
+
+  # EPIC-002: Expense Categorization & Filtering
+  { id = "EPIC-002", title = "Expense Categorization & Filtering", epic = true },
+
+  # Stories under EPIC-002
+  { id = "EPIC-002-1", title = "Predefined Categories", description = "Implement predefined expense categories (Food, Transport, Entertainment, Housing, Utilities, etc.)", priority = "must", estimate = "2d" },
+  { id = "EPIC-002-2", title = "Custom Categories", description = "Allow users to add and manage custom expense categories", priority = "should", estimate = "1d" },
+  { id = "EPIC-002-3", title = "Filter by Date Range", description = "Implement date range filtering for expenses", priority = "must", estimate = "1d" },
+  { id = "EPIC-002-4", title = "Filter by Category", description = "Implement category-based filtering for expenses", priority = "must", estimate = "1d" },
+  { id = "EPIC-002-5", title = "Filter by Payment Method", description = "Implement payment method filtering (Cash, Credit Card, Debit Card, etc.)", priority = "should", estimate = "1d" },
+  { id = "EPIC-002-6", title = "Search Expenses", description = "Implement text search for expense descriptions", priority = "should", estimate = "1d" },
+
+  # EPIC-003: SQLite Backend & Data Management
+  { id = "EPIC-003", title = "SQLite Backend & Data Management", epic = true },
+
+  # Stories under EPIC-003
+  { id = "EPIC-003-1", title = "SQLite Database Setup", description = "Setup SQLite database schema for expenses table", priority = "must", estimate = "2d" },
+  { id = "EPIC-003-2", title = "Database CRUD Operations", description = "Implement Create, Read, Update, Delete operations on SQLite database", priority = "must", estimate = "3d" },
+  { id = "EPIC-003-3", title = "Database Migration", description = "Implement database migration handling for schema changes", priority = "should", estimate = "1d" },
+
+  # EPIC-004: Summary & Dashboard
+  { id = "EPIC-004", title = "Summary & Dashboard", epic = true },
+
+  # Stories under EPIC-004
+  { id = "EPIC-004-1", title = "Daily Summary", description = "Show total expenses for the current day", priority = "must", estimate = "1d" },
+  { id = "EPIC-004-2", title = "Weekly Summary", description = "Show total expenses for the current week", priority = "must", estimate = "1d" },
+  { id = "EPIC-004-3", title = "Monthly Summary", description = "Show total expenses for the current month", priority = "must", estimate = "1d" },
+  { id = "EPIC-004-4", title = "Category Breakdown", description = "Display expense totals by category with percentages", priority = "should", estimate = "2d" },
+
+  # EPIC-005: UI/UX & Responsiveness
+  { id = "EPIC-005", title = "UI/UX & Responsiveness", epic = true },
+
+  # Stories under EPIC-005
+  { id = "EPIC-005-1", title = "Responsive Design", description = "Implement responsive design for mobile and desktop", priority = "must", estimate = "2d" },
+  { id = "EPIC-005-2", title = "Accessibility", description = "Ensure WCAG 2.1 AA compliance for accessibility", priority = "should", estimate = "2d" },
+  { id = "EPIC-005-3", title = "Dark/Light Mode", description = "Implement theme toggle for dark and light modes", priority = "nice-to-have", estimate = "1d" },
+
+  # EPIC-006: Export & Import
+  { id = "EPIC-006", title = "Export & Import", epic = true },
+
+  # Stories under EPIC-006
+  { id = "EPIC-006-1", title = "Export to CSV", description = "Export expense data to CSV format", priority = "nice-to-have", estimate = "2d" },
+  { id = "EPIC-006-2", title = "Import from CSV", description = "Import expense data from CSV format", priority = "nice-to-have", estimate = "2d" },
+]
+
+# Epic breakdown
+epics = {
+  EPIC-001 = { title = "Core Expense Management", stories = ["EPIC-001-1", "EPIC-001-2", "EPIC-001-3", "EPIC-001-4"] },
+  EPIC-002 = { title = "Expense Categorization & Filtering", stories = ["EPIC-002-1", "EPIC-002-2", "EPIC-002-3", "EPIC-002-4", "EPIC-002-5", "EPIC-002-6"] },
+  EPIC-003 = { title = "SQLite Backend & Data Management", stories = ["EPIC-003-1", "EPIC-003-2", "EPIC-003-3"] },
+  EPIC-004 = { title = "Summary & Dashboard", stories = ["EPIC-004-1", "EPIC-004-2", "EPIC-004-3", "EPIC-004-4"] },
+  EPIC-005 = { title = "UI/UX & Responsiveness", stories = ["EPIC-005-1", "EPIC-005-2", "EPIC-005-3"] },
+  EPIC-006 = { title = "Export & Import", stories = ["EPIC-006-1", "EPIC-006-2"] },
+}
+
+# User stories with acceptance criteria
+stories = {
+  "EPIC-001-1" = {
+    title = "Add Expense Form",
+    description = "Create a form to add new expenses with all required fields",
+    acceptance_criteria = [
+      "Form contains date field (defaults to today)",
+      "Form contains category dropdown with predefined options",
+      "Form contains amount input (numeric)",
+      "Form contains description textarea (optional)",
+      "Form contains payment method dropdown",
+      "Form validates required fields before submission",
+      "Expense is saved to database upon successful form submission",
+      "Form clears after successful submission"
+    ]
+  },
+  "EPIC-001-2" = {
+    title = "Edit Expense Form",
+    description = "Create functionality to edit existing expense records",
+    acceptance_criteria = [
+      "User can select expense to edit from list",
+      "Edit form pre-populates with existing values",
+      "All fields are editable",
+      "Form validates before submission",
+      "Expense updates in database",
+      "List reflects updated expense"
+    ]
+  },
+  "EPIC-001-3" = {
+    title = "Delete Expense",
+    description = "Implement expense deletion with confirmation dialog",
+    acceptance_criteria = [
+      "Delete button visible in expense list",
+      "Confirmation dialog appears on delete click",
+      "Expense deleted on confirmation",
+      "Expense removed from database",
+      "List updates to reflect deletion"
+    ]
+  },
+  "EPIC-001-4" = {
+    title = "Expense List View",
+    description = "Display list of all expenses with sorting capability",
+    acceptance_criteria = [
+      "All expenses displayed in table format",
+      "Columns: date, category, amount, description, payment method",
+      "Clicking column header sorts by that column",
+      "Sort indicator shows current sort direction",
+      "Empty state shown when no expenses exist"
+    ]
+  },
+  "EPIC-003-1" = {
+    title = "SQLite Database Setup",
+    description = "Setup SQLite database schema for expenses table",
+    acceptance_criteria = [
+      "Database initialized on first use",
+      "Expenses table created with correct schema",
+      "Schema includes: id, date, category, amount, description, payment_method",
+      "Database file stored locally"
+    ]
+  },
+  "EPIC-003-2" = {
+    title = "Database CRUD Operations",
+    description = "Implement Create, Read, Update, Delete operations on SQLite database",
+    acceptance_criteria = [
+      "Insert operation adds expense to database",
+      "Select operation retrieves expenses by various criteria",
+      "Update operation modifies existing expense",
+      "Delete operation removes expense from database",
+      "All operations handle errors gracefully"
+    ]
+  },
+}
